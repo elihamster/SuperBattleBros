@@ -1,0 +1,33 @@
+<!--
+  Copy this file to  SbgShields.csproj.user  and edit the paths for your machine.
+
+  That file is yours alone: it is gitignored and never shipped, so nobody else's
+  build breaks because of where you keep Steam. Anything set here overrides the
+  defaults in SbgShields.csproj.
+
+  You usually only need ONE of these:
+    - ProfileName, if your r2modman profile is not called "Super Battle Bros"
+    - GameDir, if Steam is on another drive
+-->
+<Project>
+  <PropertyGroup>
+
+    <!-- If your r2modman profile has a different name, this is all you need. -->
+    <!-- <ProfileName>My Profile</ProfileName> -->
+
+    <!-- Steam on another drive: -->
+    <!-- <SteamDir>D:\SteamLibrary</SteamDir> -->
+
+    <!-- Or point at the game directly: -->
+    <!-- <GameDir>D:\SteamLibrary\steamapps\common\Super Battle Golf</GameDir> -->
+
+    <!-- Or at BepInEx directly, if it is not in an r2modman profile
+         (e.g. a manual install inside the game folder): -->
+    <!-- <BepInExDir>$(GameDir)\BepInEx</BepInExDir> -->
+
+    <!-- Optional: copy the built DLL straight into the plugins folder on every
+         build, so you only have to restart the game. -->
+    <!-- <AutoDeploy>true</AutoDeploy> -->
+
+  </PropertyGroup>
+</Project>

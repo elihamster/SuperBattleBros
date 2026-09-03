@@ -1,0 +1,551 @@
+using System;
+using System.Collections.Generic;
+using HarmonyLib;
+using UnityEngine;
+
+namespace SbgShields
+{
+    /// <summary>Skin colour lookup, used by the tint, the trail and the HUD.</summary>
+    internal static class Skin
+    {
+        internal static Color Of(PlayerInfo p)
+        {
+            try
+            {
+                var settings = GameManager.PlayerCosmeticsSettings;
+                var cos = p.Cosmetics;
+                if (settings != null && cos != null && settings.skinColors != null)
+                {
+                    int i = cos.NetworkskinColorIndex;
+                    if (i >= 0 && i < settings.skinColors.Length)
+                        return settings.skinColors[i].baseColor;
+                }
+            }
+            catch { }
+            return Color.white;
+        }
+    }
+
+    /// <summary>
+    /// Recolours the vanilla shield VFX (activation, hold, dissolve, hit sparks,
+    /// break) to the owner's skin colour, for OUR Shift shield only.
+    ///
+    /// How: every one of those effects is set up by the game with
+    /// <c>TeamColorVfxHandler.SetTeam(team)</c> immediately before <c>Play()</c>.
+    /// We arm a colour in a prefix on the game method that does that, and a
+    /// postfix on SetTeam retints the freshly-teamed particle systems. That puts
+    /// the tint in place before the first particle is emitted, and it recolours
+    /// the authored gradients key by key (alpha and brightness curves kept), so
+    /// the intro/fade animation plays exactly as authored, just in a new hue.
+    /// If the effect has no TeamColorVfxHandler, the hook postfix tints after Play.
+    ///
+    /// Materials on the persistent bubble are forced by BubbleVfxMaterialHandler
+    /// every frame, so those go through BubbleMaterialTintPatch instead.
+    /// </summary>
+    internal static class ShieldTint
+    {
+        private static Color? _armed;
+        private static bool   _consumed;
+
+        private static readonly List<ParticleSystem> _systems = new List<ParticleSystem>();
+        private static readonly List<ParticleSystemRenderer> _renderers = new List<ParticleSystemRenderer>();
+        private static readonly List<BubbleVfxMaterialHandler> _handlers = new List<BubbleVfxMaterialHandler>();
+        private static readonly HashSet<string> _dumped = new HashSet<string>();
+
+        private class Instanced { public Material Original, Instance; }
+        private static readonly Dictionary<ParticleSystemRenderer, Instanced> _instances = new Dictionary<ParticleSystemRenderer, Instanced>();
+        private static readonly List<ParticleSystemRenderer> _sweep = new List<ParticleSystemRenderer>();
+        private static bool   _restored = true;   // materials currently handed back to the game
+        private static double _lastSweep;
+
+        // ---- Arming ------------------------------------------------------------
+
+        internal static bool Enabled => Plugin.TintVanillaShield.Value;
+
+        /// <summary>True while the effect being set up belongs to our Shift shield.</summary>
+        internal static bool IsOurs(PlayerInfo p)
+        {
+            if (!Local.Is(p)) return false;
+            return Plugin.WeActivated || Time.timeAsDouble - Plugin.LastOurShieldReleaseTime < 0.5;
+        }
+
+        internal static void Arm(PlayerInfo p)
+        {
+            _armed = null; _consumed = false;
+            if (!Enabled || !IsOurs(p)) return;
+            _armed = Skin.Of(p);
+        }
+
+        internal static void Disarm() { _armed = null; }
+
+        // ---- Parry flash -------------------------------------------------------
+
+        private static double _flashUntil = double.MinValue;
+        private static PlayerInfo _flashOn;
+
+        /// <summary>
+        /// Blow the shield's colour out bright for a moment. Only visible while the
+        /// shield still has a body, which during a parry is what ParryLinger is for.
+        /// Local: the tint pipeline is client-side, so other players see the game's own
+        /// shield-hit effect rather than this.
+        /// </summary>
+        internal static void ParryFlash(PlayerInfo p)
+        {
+            if (!Enabled || !Plugin.ParryGlow.Value || p == null) return;
+            var col = p.ElectromagnetShieldCollider;
+            if (col == null) return;
+
+            var c = Skin.Of(p);
+            float b = Mathf.Max(1f, Plugin.ParryGlowBoost.Value);
+            var hot = new Color(c.r * b, c.g * b, c.b * b, c.a);
+
+            _flashOn = p;
+            _flashUntil = Time.timeAsDouble + Mathf.Max(0.05f, Plugin.ParryGlowDuration.Value);
+            Apply(col.transform, hot, "parry flash");
+        }
+
+        /// <summary>Put the normal colour back when the flash is done.</summary>
+        private static void TickParryFlash()
+        {
+            if (_flashUntil == double.MinValue || Time.timeAsDouble < _flashUntil) return;
+            _flashUntil = double.MinValue;
+
+            var p = _flashOn; _flashOn = null;
+            if (p == null) return;
+            var col = p.ElectromagnetShieldCollider;
+            if (col != null) Apply(col.transform, Skin.Of(p), "parry flash over");
+        }
+
+        /// <summary>
+        /// Called from the SetTeam postfix, which sits on a method the whole game uses.
+        /// The armed check is a nullable read and returns immediately for every VFX
+        /// that is not our shield, and nothing here is allowed to throw.
+        /// </summary>
+        internal static void OnSetTeam(TeamColorVfxHandler h)
+        {
+            if (!_armed.HasValue || h == null) return;
+            _consumed = true;
+            Apply(h.transform, _armed.Value, "SetTeam");
+        }
+
+        /// <summary>Called from the shield hook postfix: fallback if no SetTeam consumed the arm.</summary>
+        internal static void OnShieldHookDone(PlayerInfo p)
+        {
+            if (_armed.HasValue && !_consumed && p.ElectromagnetShieldCollider != null)
+                Apply(p.ElectromagnetShieldCollider.transform, _armed.Value, "hook fallback");
+            _armed = null; _consumed = false;
+        }
+
+        // ---- Tint --------------------------------------------------------------
+
+        internal static void Apply(Transform root, Color c, string why)
+        {
+            try
+            {
+                _systems.Clear();
+                root.GetComponentsInChildren(true, _systems);
+                foreach (var ps in _systems) TintSystem(ps, c);
+
+                _handlers.Clear();
+                root.GetComponentsInChildren(true, _handlers);
+                foreach (var h in _handlers) BubbleMaterialTintPatch.Register(h, c);
+
+                _renderers.Clear();
+                root.GetComponentsInChildren(true, _renderers);
+                foreach (var r in _renderers)
+                {
+                    if (r.GetComponentInParent<BubbleVfxMaterialHandler>() != null) continue;
+                    var shared = r.sharedMaterial;
+                    if (shared == null) continue;
+                    if (!_instances.TryGetValue(r, out var inst) || inst.Instance == null || inst.Instance.shader != shared.shader)
+                    {
+                        inst = new Instanced { Original = shared, Instance = new Material(shared) };
+                        _instances[r] = inst;
+                    }
+                    else if (!ReferenceEquals(shared, inst.Instance))
+                    {
+                        inst.Original = shared;
+                        inst.Instance.CopyPropertiesFromMaterial(shared);
+                    }
+                    BubbleMaterialTintPatch.TintMaterial(inst.Instance, c);
+                    r.sharedMaterial = inst.Instance;
+                    _restored = false;
+                }
+
+                if (Plugin.VerboseLogging.Value && _dumped.Add(root.name))
+                    Dump(root, why);
+            }
+            catch (Exception e)
+            {
+                if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Shield tint failed: " + e.Message);
+            }
+        }
+
+        private static void TintSystem(ParticleSystem ps, Color c)
+        {
+            var main = ps.main;
+            main.startColor = Retint(main.startColor, c);
+
+            var col = ps.colorOverLifetime;
+            if (col.enabled) col.color = Retint(col.color, c);
+
+            var cbs = ps.colorBySpeed;
+            if (cbs.enabled) cbs.color = Retint(cbs.color, c);
+
+            var tr = ps.trails;
+            if (tr.enabled)
+            {
+                tr.colorOverLifetime = Retint(tr.colorOverLifetime, c);
+                tr.colorOverTrail    = Retint(tr.colorOverTrail, c);
+            }
+        }
+
+        /// <summary>
+        /// Same shape as the source: Color stays Color, Gradient stays Gradient, etc.
+        /// Each colour key becomes the skin colour scaled by the key's own peak
+        /// component, which keeps relative brightness and HDR intensity; alpha is
+        /// untouched, so fades and pulses survive.
+        /// </summary>
+        internal static ParticleSystem.MinMaxGradient Retint(ParticleSystem.MinMaxGradient src, Color c)
+        {
+            switch (src.mode)
+            {
+                case ParticleSystemGradientMode.Color:
+                    return new ParticleSystem.MinMaxGradient(Hue(src.color, c));
+                case ParticleSystemGradientMode.TwoColors:
+                    return new ParticleSystem.MinMaxGradient(Hue(src.colorMin, c), Hue(src.colorMax, c));
+                case ParticleSystemGradientMode.Gradient:
+                    return new ParticleSystem.MinMaxGradient(Hue(src.gradient, c));
+                case ParticleSystemGradientMode.TwoGradients:
+                    return new ParticleSystem.MinMaxGradient(Hue(src.gradientMin, c), Hue(src.gradientMax, c));
+                case ParticleSystemGradientMode.RandomColor:
+                    return new ParticleSystem.MinMaxGradient(Hue(src.gradient, c)) { mode = ParticleSystemGradientMode.RandomColor };
+                default:
+                    return src;
+            }
+        }
+
+        private static Color Hue(Color k, Color c)
+        {
+            float i = k.maxColorComponent;
+            if (i <= 0.0001f) return k; // black stays black (usually a fade-to-dark key)
+            return new Color(c.r * i, c.g * i, c.b * i, k.a);
+        }
+
+        private static Gradient Hue(Gradient g, Color c)
+        {
+            if (g == null) return null;
+            var keys = g.colorKeys;
+            var outKeys = new GradientColorKey[keys.Length];
+            for (int i = 0; i < keys.Length; i++)
+                outKeys[i] = new GradientColorKey(Hue(keys[i].color, c), keys[i].time);
+            var ng = new Gradient { mode = g.mode };
+            ng.SetKeys(outKeys, g.alphaKeys);
+            return ng;
+        }
+
+        // ---- Housekeeping ------------------------------------------------------
+
+        /// <summary>
+        /// Two jobs, both cheap and both skippable most frames:
+        ///  - once our shield has been down a while, hand the pooled renderers their
+        ///    stock materials back, since the vanilla magnet item shares those prefabs,
+        ///  - every few seconds, drop entries whose renderer the engine has destroyed
+        ///    and destroy the Material we made for them. Without this the dictionary
+        ///    grows by a few materials per scene load and never shrinks.
+        /// </summary>
+        internal static void Tick()
+        {
+            TickParryFlash();   // before the early-out: a flash can be pending with nothing instanced yet
+            if (_instances.Count == 0) return;
+
+            double now = Time.timeAsDouble;
+            bool ourShieldIdle = !Plugin.WeActivated && now - Plugin.LastOurShieldReleaseTime >= 3.0;
+
+            if (!_restored && ourShieldIdle)
+            {
+                foreach (var kv in _instances)
+                {
+                    var r = kv.Key; var inst = kv.Value;
+                    if (r != null && inst.Original != null && ReferenceEquals(r.sharedMaterial, inst.Instance))
+                        r.sharedMaterial = inst.Original;
+                }
+                _restored = true;   // do not walk the dictionary again until we retint
+            }
+
+            if (now - _lastSweep < 5.0) return;
+            _lastSweep = now;
+            _sweep.Clear();
+            foreach (var kv in _instances)
+                if (kv.Key == null) _sweep.Add(kv.Key);   // Unity-destroyed renderer
+            foreach (var r in _sweep)
+            {
+                if (_instances.TryGetValue(r, out var inst) && inst.Instance != null)
+                    UnityEngine.Object.Destroy(inst.Instance);
+                _instances.Remove(r);
+            }
+            if (_sweep.Count > 0 && Plugin.VerboseLogging.Value)
+                Plugin.Log.LogInfo($"Shield tint: released {_sweep.Count} material instance(s) for destroyed renderers.");
+            BubbleMaterialTintPatch.Sweep();
+        }
+
+        /// <summary>Full teardown on plugin unload: give everything back and destroy what we made.</summary>
+        internal static void DestroyAll()
+        {
+            foreach (var kv in _instances)
+            {
+                var r = kv.Key; var inst = kv.Value;
+                if (r != null && inst.Original != null && ReferenceEquals(r.sharedMaterial, inst.Instance))
+                    r.sharedMaterial = inst.Original;
+                if (inst.Instance != null) UnityEngine.Object.Destroy(inst.Instance);
+            }
+            _instances.Clear();
+            _dumped.Clear();
+            _restored = true;
+            _armed = null;
+            BubbleMaterialTintPatch.DestroyAll();
+        }
+
+        private static void Dump(Transform root, string why)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"Shield VFX '{root.name}' tinted via {why}:");
+            foreach (var ps in _systems)
+            {
+                var m = ps.main; var col = ps.colorOverLifetime;
+                sb.Append($"\n  PS '{ps.name}' startColor={m.startColor.mode} col={(col.enabled ? col.color.mode.ToString() : "off")}" +
+                          $" custom1={(ps.customData.enabled ? ps.customData.GetMode(ParticleSystemCustomData.Custom1).ToString() : "off")}" +
+                          $" delay={m.startDelay.constant:0.00} loop={m.loop}");
+                var r = ps.GetComponent<ParticleSystemRenderer>();
+                var mat = r != null ? r.sharedMaterial : null;
+                if (mat != null)
+                {
+                    sb.Append($"\n     mat '{mat.name}' shader '{mat.shader.name}' handler={(r.GetComponentInParent<BubbleVfxMaterialHandler>() != null)}");
+                    var sh = mat.shader;
+                    int n = sh.GetPropertyCount();
+                    for (int i = 0; i < n; i++)
+                        if (sh.GetPropertyType(i) == UnityEngine.Rendering.ShaderPropertyType.Color)
+                            sb.Append($" {sh.GetPropertyName(i)}={mat.GetColor(sh.GetPropertyName(i))}");
+                }
+            }
+            Plugin.Log.LogInfo(sb.ToString());
+        }
+    }
+
+    // =========================================================================
+    //  Harmony hooks for the tint
+    // =========================================================================
+
+    /// <summary>Arm before the game sets up the shield/dissolve VFX, fall back after.</summary>
+    [HarmonyPatch(typeof(PlayerInfo), "OnIsElectromagnetShieldActiveChanged")]
+    internal static class ShieldVfxTintHook
+    {
+        private static void Prefix(PlayerInfo __instance)
+        {
+            ShieldTint.Arm(__instance);
+            if (Plugin.VerboseLogging.Value && Local.Is(__instance) && Plugin.WeActivated)
+                Plugin.Log.LogInfo($"Shield hook fired {(Time.timeAsDouble - Plugin.LastActivationTime) * 1000.0:0} ms after activation (active={__instance.IsElectromagnetShieldActive}).");
+        }
+
+        private static void Postfix(PlayerInfo __instance)
+        {
+            if (Local.Is(__instance)) ShieldTint.OnShieldHookDone(__instance);
+            else ShieldTint.Disarm();
+        }
+    }
+
+    /// <summary>Arm around the hit/break effects so sparks and the break burst match the shield.</summary>
+    [HarmonyPatch(typeof(PlayerInfo), "PlayElectromagnetShieldHitInternal")]
+    internal static class ShieldHitTintHook
+    {
+        private static void Prefix(PlayerInfo __instance) => ShieldTint.Arm(__instance);
+        private static void Postfix() => ShieldTint.Disarm();
+    }
+
+    [HarmonyPatch(typeof(TeamColorVfxHandler), nameof(TeamColorVfxHandler.SetTeam))]
+    internal static class TeamColorSetTeamPatch
+    {
+        private static void Postfix(TeamColorVfxHandler __instance) => ShieldTint.OnSetTeam(__instance);
+    }
+
+    /// <summary>
+    /// Replaces BubbleVfxMaterialHandler.Update for shields we have tinted: same
+    /// above/below-water swap, but between tinted copies of its two materials.
+    /// Registration expires shortly after our shield drops, so the pooled prefab
+    /// goes back to vanilla for the next user.
+    /// </summary>
+    [HarmonyPatch(typeof(BubbleVfxMaterialHandler), "Update")]
+    internal static class BubbleMaterialTintPatch
+    {
+        private class Tinted
+        {
+            public Material Normal, Stencil;
+            public Color Color;
+        }
+
+        private static readonly Dictionary<BubbleVfxMaterialHandler, Tinted> _reg = new Dictionary<BubbleVfxMaterialHandler, Tinted>();
+
+        private static AccessTools.FieldRef<BubbleVfxMaterialHandler, ParticleSystemRenderer> _renderer;
+        private static AccessTools.FieldRef<BubbleVfxMaterialHandler, Material> _normal;
+        private static AccessTools.FieldRef<BubbleVfxMaterialHandler, Material> _stencil;
+
+        private static bool Prepare()
+        {
+            try
+            {
+                _renderer = AccessTools.FieldRefAccess<BubbleVfxMaterialHandler, ParticleSystemRenderer>("particleSystemRenderer");
+                _normal   = AccessTools.FieldRefAccess<BubbleVfxMaterialHandler, Material>("normalMaterial");
+                _stencil  = AccessTools.FieldRefAccess<BubbleVfxMaterialHandler, Material>("stencilMaterial");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("BubbleVfxMaterialHandler fields not found; shield tint will be overridden by the game. " + e.Message);
+                return false;
+            }
+        }
+
+        internal static void Register(BubbleVfxMaterialHandler h, Color c)
+        {
+            if (h == null || _normal == null) return;
+            if (!_reg.TryGetValue(h, out var t))
+            {
+                t = new Tinted();
+                _reg[h] = t;
+            }
+            var n = _normal(h); var st = _stencil(h);
+            if (t.Normal == null  && n  != null) t.Normal  = new Material(n);
+            if (t.Stencil == null && st != null) t.Stencil = new Material(st);
+            if (t.Color != c || t.Normal == null)
+            {
+                t.Color = c;
+                if (t.Normal  != null && n  != null) { t.Normal.CopyPropertiesFromMaterial(n);   TintMaterial(t.Normal, c); }
+                if (t.Stencil != null && st != null) { t.Stencil.CopyPropertiesFromMaterial(st); TintMaterial(t.Stencil, c); }
+            }
+            // Apply now rather than waiting for the next Update, so frame 0 is tinted.
+            var r = _renderer(h);
+            if (r != null) Swap(r, t);
+        }
+
+        internal static void TintMaterial(Material m, Color c)
+        {
+            var sh = m.shader;
+            int count = sh.GetPropertyCount();
+            for (int i = 0; i < count; i++)
+            {
+                if (sh.GetPropertyType(i) != UnityEngine.Rendering.ShaderPropertyType.Color) continue;
+                string prop = sh.GetPropertyName(i);
+                var oc = m.GetColor(prop);
+                float intensity = Mathf.Max(oc.maxColorComponent, 1f);
+                m.SetColor(prop, new Color(c.r * intensity, c.g * intensity, c.b * intensity, oc.a));
+            }
+        }
+
+        // Resolved once per frame instead of once per handler per frame.
+        private static Transform _ourShieldRoot;
+        private static int _ourShieldFrame = -1;
+
+        private static bool StillOurs(BubbleVfxMaterialHandler h)
+        {
+            if (!Plugin.WeActivated && Time.timeAsDouble - Plugin.LastOurShieldReleaseTime >= 3.0) return false;
+            if (_ourShieldFrame != Time.frameCount)
+            {
+                _ourShieldFrame = Time.frameCount;
+                var local = GameManager.LocalPlayerInfo;
+                var col = local != null ? local.ElectromagnetShieldCollider : null;
+                _ourShieldRoot = col != null ? col.transform : null;
+            }
+            return _ourShieldRoot != null && h.transform.IsChildOf(_ourShieldRoot);
+        }
+
+        private static void Swap(ParticleSystemRenderer r, Tinted t)
+        {
+            var tracker = GameManager.CameraLevelBoundsTracker;
+            if (tracker == null) return;
+
+            float waterHeight = float.NegativeInfinity;
+            var secondary = tracker.CurrentSecondaryHazardLocalOnly;
+            if (secondary == null)
+            {
+                if (MainOutOfBoundsHazard.Type == OutOfBoundsHazard.Water)
+                    waterHeight = tracker.CurrentOutOfBoundsHazardWorldHeightLocalOnly;
+            }
+            else if (secondary.Type == OutOfBoundsHazard.Water)
+            {
+                waterHeight = tracker.CurrentOutOfBoundsHazardWorldHeightLocalOnly;
+            }
+
+            var want = tracker.transform.position.y > waterHeight ? t.Stencil : t.Normal;
+            if (want == null) want = t.Normal ?? t.Stencil;
+            if (want != null && !ReferenceEquals(r.sharedMaterial, want)) r.sharedMaterial = want;
+        }
+
+        /// <summary>
+        /// Runs for every bubble VFX in the scene, including other players' magnet
+        /// shields, so the first line is a dictionary miss and an immediate hand-back
+        /// to the game. Low priority: if another mod prefixes this method, theirs runs
+        /// first and we never skip it.
+        /// </summary>
+        [HarmonyPriority(Priority.Low)]
+        private static bool Prefix(BubbleVfxMaterialHandler __instance)
+        {
+            try
+            {
+                if (!_reg.TryGetValue(__instance, out var t)) return true;
+                if (!StillOurs(__instance)) { Release(__instance, t); return true; }
+                var r = _renderer(__instance);
+                if (r == null) return false;
+                Swap(r, t);
+                return false;
+            }
+            catch (Exception e)
+            {
+                // Never take the game's bubble rendering down with us.
+                Plugin.Log.LogWarning("Bubble tint error, reverting to vanilla for this handler: " + e.Message);
+                try { _reg.Remove(__instance); } catch { }
+                return true;
+            }
+        }
+
+        private static void Release(BubbleVfxMaterialHandler h, Tinted t)
+        {
+            _reg.Remove(h);
+            if (t == null) return;
+            if (t.Normal  != null) UnityEngine.Object.Destroy(t.Normal);
+            if (t.Stencil != null) UnityEngine.Object.Destroy(t.Stencil);
+        }
+
+        private static readonly List<BubbleVfxMaterialHandler> _regSweep = new List<BubbleVfxMaterialHandler>();
+
+        /// <summary>
+        /// Handlers destroyed by a scene change never run Update again, so their entries
+        /// would sit here forever holding two Materials each. Called from ShieldTint.Tick.
+        /// </summary>
+        internal static void Sweep()
+        {
+            if (_reg.Count == 0) return;
+            _regSweep.Clear();
+            foreach (var kv in _reg) if (kv.Key == null) _regSweep.Add(kv.Key);
+            foreach (var h in _regSweep)
+            {
+                if (_reg.TryGetValue(h, out var t))
+                {
+                    if (t.Normal  != null) UnityEngine.Object.Destroy(t.Normal);
+                    if (t.Stencil != null) UnityEngine.Object.Destroy(t.Stencil);
+                }
+                _reg.Remove(h);
+            }
+        }
+
+        internal static void DestroyAll()
+        {
+            foreach (var kv in _reg)
+            {
+                if (kv.Value.Normal  != null) UnityEngine.Object.Destroy(kv.Value.Normal);
+                if (kv.Value.Stencil != null) UnityEngine.Object.Destroy(kv.Value.Stencil);
+            }
+            _reg.Clear();
+            _ourShieldRoot = null;
+        }
+    }
+}

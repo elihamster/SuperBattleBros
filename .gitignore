@@ -1,0 +1,5 @@
+# Machine-specific build paths. Copy SbgShields.csproj.user.example to get started.
+SbgShields.csproj.user
+
+bin/
+obj/

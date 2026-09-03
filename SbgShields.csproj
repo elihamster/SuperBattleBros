@@ -1,0 +1,134 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Imported first so anything it sets wins over the defaults further down. -->
+  <Import Project="SbgShields.csproj.user" Condition="Exists('SbgShields.csproj.user')" />
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>SbgShields</AssemblyName>
+    <RootNamespace>SbgShields</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Game assemblies are not strong-named / have no XML docs; quiet the noise. -->
+    <NoWarn>CS0436;CS1701;CS1702</NoWarn>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <!--
+    Paths. Do NOT hardcode a machine-specific path here: this file is checked in and
+    shared. Instead copy SbgShields.csproj.user.example to SbgShields.csproj.user and
+    edit that (it is gitignored and overrides everything below).
+
+    The defaults cover a stock Steam install on Windows. BepInEx is assumed to be the
+    r2modman profile named by $(ProfileName); change that one property if your profile
+    has a different name, or set BepInExDir outright in the .user file.
+  -->
+  <PropertyGroup>
+    <SteamDir Condition="'$(SteamDir)' == ''">$(ProgramFiles) (x86)\Steam</SteamDir>
+    <GameDir Condition="'$(GameDir)' == ''">$(SteamDir)\steamapps\common\Super Battle Golf</GameDir>
+    <ProfileName Condition="'$(ProfileName)' == ''">Super Battle Bros</ProfileName>
+    <!-- BepInEx lives in the r2modman profile, not the game folder. -->
+    <BepInExDir Condition="'$(BepInExDir)' == ''">$(AppData)\r2modmanPlus-local\SuperBattleGolf\profiles\$(ProfileName)\BepInEx</BepInExDir>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)\Super Battle Golf_Data\Managed</ManagedDir>
+  </PropertyGroup>
+
+  <!--
+    Two configurations:
+      Release  - what you give people. Debug tooling is not compiled in.
+      DevDebug - your build. Defines SBG_DEV, which enables the chat commands
+                 (/give, /pct, /pips, /sbg), the F6-F10 keys and the config
+                 entries that drive them.
+    Build the dev one with:  dotnet build -c DevDebug
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'DevDebug'">
+    <DefineConstants>$(DefineConstants);SBG_DEV</DefineConstants>
+    <Optimize>false</Optimize>
+  </PropertyGroup>
+
+  <Target Name="WarnIfManagedMissing" BeforeTargets="ResolveAssemblyReferences">
+    <Warning Condition="!Exists('$(ManagedDir)')"
+             Text="Managed dir not found: $(ManagedDir). Copy SbgShields.csproj.user.example to SbgShields.csproj.user and set GameDir/BepInExDir. Every CS0246 below comes from this." />
+    <Warning Condition="!Exists('$(BepInExDir)\core\BepInEx.dll')"
+             Text="BepInEx not found at: $(BepInExDir). Same fix as above." />
+  </Target>
+
+  <ItemGroup>
+    <!-- BepInEx 5 + Harmony -->
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExDir)\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExDir)\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Game code -->
+    <Reference Include="GameAssembly">
+      <HintPath>$(ManagedDir)\GameAssembly.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- SingletonBehaviour<> base class used by VfxPersistentData and others -->
+    <Reference Include="SharedAssembly">
+      <HintPath>$(ManagedDir)\SharedAssembly.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AntiCheat">
+      <HintPath>$(ManagedDir)\AntiCheat.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Mirror">
+      <HintPath>$(ManagedDir)\Mirror.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- FMOD.Studio.EventInstance lives in FMODUnity.dll (there is no fmodstudio.dll) -->
+    <Reference Include="FMODUnity">
+      <HintPath>$(ManagedDir)\FMODUnity.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Unity -->
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.InputSystem">
+      <HintPath>$(ManagedDir)\Unity.InputSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Physics.OverlapSphere, Rigidbody, SphereCollider -->
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(ManagedDir)\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- OnGUI / GUI.* for the HUD -->
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(ManagedDir)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- ParticleSystemStopBehavior, to hide the vanilla shield particle -->
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>$(ManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Font.CreateDynamicFontFromOSFont -->
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(ManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+
+  <!-- Optional: set AutoDeploy in your .user file to skip the manual copy step. -->
+  <Target Name="DeployToPlugins" AfterTargets="Build" Condition="'$(AutoDeploy)' == 'true'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BepInExDir)\plugins" ContinueOnError="true" />
+    <Message Importance="high" Text="Deployed $(TargetFileName) to $(BepInExDir)\plugins" />
+  </Target>
+
+</Project>
