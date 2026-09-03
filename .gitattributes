@@ -1,0 +1,16 @@
+[master (root-commit) 3720b39] 0.7.7 baseline"* text=auto
+ 14 files changed, 5159 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 ChatCommands.cs
+ create mode 100644 Hud.cs
+ create mode 100644 KillZone.cs
+ create mode 100644 Launch.cs
+ create mode 100644 LaunchVfx.cs
+ create mode 100644 ModHandshake.cs
+ create mode 100644 Patches.cs
+ create mode 100644 Plugin.cs
+ create mode 100644 SBG-Shields-Handoff-v4.md
+ create mode 100644 SbgShields.csproj
+ create mode 100644 SbgShields.csproj.user.example
+ create mode 100644 ShieldState.cs
+ create mode 100644 ShieldTint.cs
