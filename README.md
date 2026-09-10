@@ -8,23 +8,31 @@ Hold **Left Shift** to raise a bubble. It absorbs hits, costs pips, and breaks i
 
 - **Everyone in the lobby needs the same version.** The mod checks over text chat when you join. If anyone is missing it or on a different version, the mod switches itself off for you and says so on screen. Nothing breaks; you just play vanilla until it's sorted.
 - **Private lobbies only.** In a Public lobby the mod does nothing at all, silently. This is not configurable.
-- **Use at your own risk.** Everything happens on your own machine. The game ships an anti-cheat assembly; what it inspects beyond activation rate limits is not known. This has been used in private lobbies among friends without issue, but that's the extent of it.
+- **Use at your own risk.** Everything happens on your own machine, plus one small network message the mod sends only once everyone has passed the version check. The game ships an anti-cheat assembly; what it inspects beyond activation rate limits is not known. This has been used in private lobbies among friends without issue, but that's the extent of it.
 
-## What's in it
+## The bubble
 
-**Bubble.** 5 pips. Small hits cost 1, bigger hits cost more, some hits break it outright. It blinks when it's down to its last pip. Rooted while it's up by default — no moving, jumping, swinging or items.
+**Pips.** Ten, drawn as five circles under the icon: a 1-pip hit takes half a circle. The bubble itself dims as pips go and flashes white on each one lost, on everyone's screen, so an attacker can see it weaken. It blinks when it's down to its last circle. No regeneration.
 
-**Break.** A hit that breaks the bubble is cancelled; you pop straight up, tumble, land and get up. Everyone nearby hears it, and the bubble is gone for 10 seconds. That cooldown is the real cost.
+**What a hit costs.** Stray ball 2, pistol 3, homing ball 4, elephant gun 5, explosions and carts 6, golf swing breaks it outright. A freeze bomb costs nothing: everyone else in range still freezes, you don't. Explosions still go off against everyone else nearby; the bubble only spares its holder. Costs are editable per hit type in the config.
 
-**Parry.** Let go of the bubble with a threat in reach — a ball, rocket, cart or bomb within a metre or two, or a golfer winding up next to you — and the next hit from it is absorbed for free: no pips, no percent, and it stops hits that would normally break the bubble. Letting go with nothing near you arms nothing, so it cannot be fished for. Someone aiming a gun along a line through your bubble counts too (experimental).
+**Nothing bounces off a held bubble.** Balls, rockets and bombs pass in and cost pips; gun shots land the same way. Rooted while it's up by default — no moving, jumping, swinging or items.
 
-**Percent and knockback.** Every hit that gets through adds percent. Knockback grows with it up to 100% and then stops growing; only a death launch goes higher, so anyone flying off the top of the map is dead. Explosions lift, bullets shove you along the ground, clubs and carts sit in between. At 250% a knockout is a star KO. Percent resets each hole.
+**Break.** A hit that breaks the bubble is cancelled; you pop straight up, tumble, land, and get up. Everyone nearby hears it, and the bubble is gone for 10 seconds. That cooldown is the real cost.
 
-**DI.** As you're launched, W steepens the arc, S flattens it, A and D curve it. Where you land, not how far.
+**Parry.** Let go of the bubble with a threat coming — anything that would reach you within about a third of a second, or a golfer winding up next to you — and the next hit from it is absorbed for free: no pips, no percent, and it stops a swing that would normally break the bubble. Letting go with nothing coming arms nothing, so it cannot be fished for. Someone aiming a gun along a line through your bubble counts too (experimental). The player you parried hears it.
 
-**Teching.** Press the bubble key just before your tumbling body hits the ground and you're up instantly, no lie-down. A missed tech gets you the game's normal comeback shield; a tech gets almost none. Breaks and death launches can't be teched.
+## The percent layer
 
-**Invulnerability look.** While the game's comeback shield is up, the body flickers washed-out white, Smash-style, on every client. The game's own bubble can be hidden alongside it in the config.
+**Percent and knockback.** Every hit that gets through adds percent, more for a harder hit: a point-blank elephant gun is worth twice a swing, a pistol at range half. Knockback grows with your percent up to 100% and then stops growing; only a death launch goes higher, so anyone flying off the top of the map is dead. Explosions lift, bullets shove you along the ground, clubs and carts sit in between. At 250% a knockout is a star KO, seen on every screen. Percent resets each hole.
+
+**The flight is the stun.** When you land you get up a quarter second later, whatever the game's timer says. From 65% launches start to hang at the top of the arc, fully by 150%: that is how the stun grows with percent. The comeback shield after a get-up lasts one second instead of three; the gold one for repeated knockouts is the game's own.
+
+**DI.** As you're launched, push toward where on the screen you want to drift and the launch bends that way, up to 20°. Where you land, not how far.
+
+**Teching.** Press the bubble key just before your tumbling body hits the ground and you're up instantly, no lie-down. One press is one attempt, a missed one locks the key out briefly, and a tech roots you for a moment before you can act. A launch you caused yourself, or a break, can't be teched.
+
+**Invulnerability look.** While the game's comeback shield is up, the body flickers washed-out white, Smash-style, on every client. Past 100% embers rise off you, redder toward the kill line.
 
 ## Turning things off
 
@@ -36,7 +44,7 @@ Three master switches, each layer coming off cleanly on its own (`com.sbg.shield
 [Percent] KillZoneEnabled   = false   -> percent climbs, nobody dies
 ```
 
-`RootWhileShielded = false` lets you move with the bubble up. DI, teching, the flicker and the rage embers each have their own switch under `[Launch]`, `[Immunity]` and `[Percent]`.
+`RootWhileShielded = false` lets you move with the bubble up. `Bubble.BubbleReflects = true` restores the game's wall that bounces things back, and must then match for everyone in the lobby. DI, teching, hang time, the flicker and the embers each have their own switch.
 
 ## Recommended
 
@@ -52,4 +60,4 @@ Open an issue at https://github.com/elihamster/SuperBattleBros/issues and includ
 
 ## Building from source
 
-Needs the .NET SDK, the game installed through Steam, and BepInEx in an r2modman profile. `dotnet build` produces the developer build; `dotnet build -c Release` the one that ships. If your Steam or profile paths differ from the defaults, copy `SbgShields.csproj.local.example` to `SbgShields.csproj.local` and set them there. `.\package.ps1` builds Release and zips a Thunderstore package into `dist\`.
+Needs the .NET SDK, the game installed through Steam, and BepInEx in an r2modman profile. `dotnet build` produces the developer build; `dotnet build -c Release` the one that ships. If your Steam or profile paths differ from the defaults, copy `SbgShields.csproj.local.example` to `SbgShields.csproj.local` and set them there. `.\package.ps1` builds and zips a Thunderstore package into `dist\`.
