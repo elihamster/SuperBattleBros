@@ -24,6 +24,9 @@ assistant concluded from how a session went; the user can override any of them a
 - **[inferred]** Diagnostics for a reported bug default on and cheap.
 - **[inferred]** Read the whole game method before claiming what it does. When a symptom persists after
   a fix, read the mod's own code on that path next, not the game's again.
+- **[user]** Never guess at game behaviour. The game's assemblies are decompiled in `decomp/` (gitignored:
+  `decomp/GameAssembly`, `decomp/SharedAssembly`, made with `ilspycmd -p -o <dir> -r <Managed> <dll>`).
+  Read the method there. If the folder is missing, regenerate it before reasoning about game code.
 
 ## Design
 

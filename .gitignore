@@ -6,3 +6,6 @@ obj/
 
 # Thunderstore zips from package.ps1
 dist/
+
+# Decompiled game assemblies (ilspycmd). Reference only; the game's code is not ours to publish.
+decomp/
