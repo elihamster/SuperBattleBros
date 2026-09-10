@@ -116,6 +116,45 @@ namespace SbgShields
             if (col != null) Apply(col.transform, Skin.Of(p), "parry flash over");
         }
 
+        // ---- Pip warning -------------------------------------------------------
+
+        private static bool _warnActive, _warnDim;
+
+        /// <summary>
+        /// Last pip: the bubble blinks BRIGHT. The tint pipeline is re-run on each phase
+        /// change with either the skin colour or the skin colour pushed toward white, so
+        /// it costs a handful of material writes ten times a second and nothing while
+        /// the bubble is healthy. It used to blink dark instead, which on an additive
+        /// bubble reads as a black stain rather than a warning. The parry flash has
+        /// priority for the moment it runs.
+        /// </summary>
+        private static void TickPipWarning()
+        {
+            var p = GameManager.LocalPlayerInfo;
+            bool want = Enabled && Plugin.PipWarning.Value && Plugin.WeActivated && ShieldState.Pips == 1 &&
+                        p != null && p.IsElectromagnetShieldActive && _flashUntil == double.MinValue;
+
+            if (!want)
+            {
+                if (_warnActive)
+                {
+                    _warnActive = false;
+                    if (_warnDim && p != null && p.ElectromagnetShieldCollider != null)
+                        Apply(p.ElectromagnetShieldCollider.transform, Skin.Of(p), "pip warning over");
+                    _warnDim = false;
+                }
+                return;
+            }
+
+            var col = p.ElectromagnetShieldCollider;
+            if (col == null) return;
+            bool bright = (Time.timeAsDouble * 5.0) % 1.0 < 0.5;   // 5 Hz
+            if (_warnActive && bright == _warnDim) return;
+            _warnActive = true; _warnDim = bright;
+            var c = Skin.Of(p);
+            Apply(col.transform, bright ? Color.Lerp(c, Color.white, 0.7f) : c, "pip warning");
+        }
+
         /// <summary>
         /// Called from the SetTeam postfix, which sits on a method the whole game uses.
         /// The armed check is a nullable read and returns immediately for every VFX
@@ -257,6 +296,7 @@ namespace SbgShields
         internal static void Tick()
         {
             TickParryFlash();   // before the early-out: a flash can be pending with nothing instanced yet
+            TickPipWarning();
             if (_instances.Count == 0) return;
 
             double now = Time.timeAsDouble;

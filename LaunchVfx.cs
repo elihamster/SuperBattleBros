@@ -71,6 +71,8 @@ namespace SbgShields
 
         internal static void Tick()
         {
+            RageTick();
+
             if (!Plugin.LaunchTrail.Value)
             {
                 if (_trails.Count > 0) StopAll();
@@ -105,6 +107,7 @@ namespace SbgShields
                 // Percent gate: only our own percent is known, so remote players keep
                 // the speed-only rule until pips/percent are synced.
                 bool percentOk = !ReferenceEquals(p, local) ||
+                                 !Plugin.PercentEnabled.Value ||
                                  ShieldState.Percent >= Plugin.LaunchTrailMinPercent.Value ||
                                  KillZone.IsArmed;
 
@@ -126,8 +129,9 @@ namespace SbgShields
                 t.Go.transform.position = anchor.position;
 
                 // Everyone's trail now runs on the same rule: tumbling, and still fast
-                // enough. It stops when you stop being knocked out, which since 0.7.1 is
-                // often mid-air, so the smoke reads as "still stunned".
+                // enough. It stops when you stop being knocked out; with
+                // StayDownUntilLanding on that is the landing, so the smoke runs the
+                // whole arc and reads as "still stunned".
                 bool keep = tumbling && speed >= Plugin.LaunchTrailStopSpeed.Value;
                 if (!keep && now - t.StartedAt > 0.15) Stop(t);
             }
@@ -249,9 +253,132 @@ namespace SbgShields
         internal static void DestroyAll()
         {
             StopAll();
+            DestroyRage();
             if (_puffTex != null) { UnityEngine.Object.Destroy(_puffTex); _puffTex = null; }
             _shader = null;
             _shaderSearched = false;
+        }
+
+        // ---- Rage embers -------------------------------------------------------
+        // Smash's rage is the attacker hitting harder at high percent; here the
+        // victim's own percent already does that job. What was missing was the LOOK:
+        // a player at 150% should read as one. Embers rise off the chest from
+        // RageVisualMinPercent, thicker and redder toward the kill line. Local only,
+        // because only this client knows this percent.
+
+        private static GameObject _rageGo;
+        private static ParticleSystem _ragePs;
+        private static Material _rageMat;
+        private static Texture2D _emberTex;
+        private static bool _rageOn;
+
+        private static void RageTick()
+        {
+            var p = GameManager.LocalPlayerInfo;
+            bool want = p != null && Plugin.RageVisual.Value && Plugin.PercentEnabled.Value && ShieldState.InPlayableHole &&
+                        ShieldState.Percent >= Plugin.RageVisualMinPercent.Value && !KillZone.IsLingering;
+            try { if (want && p.Movement != null && (p.Movement.IsRespawningOrDrowning || !p.Movement.IsVisible)) want = false; } catch { }
+
+            if (!want)
+            {
+                if (_rageOn)
+                {
+                    _rageOn = false;
+                    try { if (_ragePs != null) _ragePs.Stop(true, ParticleSystemStopBehavior.StopEmitting); } catch { }
+                }
+                return;
+            }
+
+            if (_rageGo == null && !CreateRage()) return;
+
+            float min = Plugin.RageVisualMinPercent.Value;
+            float t = Mathf.InverseLerp(min, Mathf.Max(min + 1f, Plugin.KillPercent.Value), ShieldState.Percent);
+
+            var em = _ragePs.emission;
+            em.rateOverTime = Mathf.Lerp(10f, 45f, t);
+            var main = _ragePs.main;
+            Color hot  = Color.Lerp(new Color(1f, 0.62f, 0.18f), new Color(1f, 0.15f, 0.06f), t);
+            Color core = new Color(1f, 0.88f, 0.4f);
+            main.startColor = new ParticleSystem.MinMaxGradient(hot, core);
+
+            var anchor = p.ChestBone != null ? p.ChestBone : p.transform;
+            _rageGo.transform.position = anchor.position;
+            if (!_rageOn) { _rageOn = true; _ragePs.Play(true); }
+        }
+
+        private static bool CreateRage()
+        {
+            try
+            {
+                if (_emberTex == null) _emberTex = MakeEmberTexture(32);
+                if (_rageMat == null) _rageMat = MakeUnlitMaterial(_emberTex, additive: true);
+                if (_rageMat == null) return false;
+
+                _rageGo = new GameObject("SbgRageEmbers");
+                _ragePs = _rageGo.AddComponent<ParticleSystem>();
+                _ragePs.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+                var main = _ragePs.main;
+                main.simulationSpace = ParticleSystemSimulationSpace.World;
+                main.loop = true; main.playOnAwake = false;
+                main.startLifetime = new ParticleSystem.MinMaxCurve(0.45f, 0.9f);
+                main.startSpeed    = new ParticleSystem.MinMaxCurve(0.6f, 1.6f);
+                main.startSize     = new ParticleSystem.MinMaxCurve(0.1f, 0.26f);
+                main.gravityModifier = -0.15f;             // embers drift up
+                main.maxParticles = 200;
+
+                var shape = _ragePs.shape;
+                shape.enabled = true; shape.shapeType = ParticleSystemShapeType.Sphere; shape.radius = 0.45f;
+
+                var vel = _ragePs.velocityOverLifetime;
+                vel.enabled = true; vel.space = ParticleSystemSimulationSpace.World;
+                vel.y = new ParticleSystem.MinMaxCurve(0.8f, 1.8f);
+
+                var sol = _ragePs.sizeOverLifetime; sol.enabled = true;
+                sol.size = new ParticleSystem.MinMaxCurve(1f, new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(1f, 0f)));
+
+                var col = _ragePs.colorOverLifetime; col.enabled = true;
+                var g = new Gradient();
+                g.SetKeys(new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                          new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(0.8f, 0.5f), new GradientAlphaKey(0f, 1f) });
+                col.color = new ParticleSystem.MinMaxGradient(g);
+
+                var r = _rageGo.GetComponent<ParticleSystemRenderer>();
+                r.sharedMaterial = _rageMat;
+                r.renderMode = ParticleSystemRenderMode.Billboard;
+                r.shadowCastingMode = ShadowCastingMode.Off; r.receiveShadows = false;
+                return true;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("Rage embers create failed: " + e.Message);
+                return false;
+            }
+        }
+
+        private static void DestroyRage()
+        {
+            _rageOn = false;
+            if (_rageGo != null) UnityEngine.Object.Destroy(_rageGo);
+            if (_rageMat != null) UnityEngine.Object.Destroy(_rageMat);
+            if (_emberTex != null) UnityEngine.Object.Destroy(_emberTex);
+            _rageGo = null; _ragePs = null; _rageMat = null; _emberTex = null;
+        }
+
+        private static Texture2D MakeEmberTexture(int size)
+        {
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            var px = new Color[size * size];
+            float r = size * 0.5f;
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(r, r)) / r;
+                float a = Mathf.Clamp01(1f - d * d);
+                px[y * size + x] = new Color(a, a, a, a);   // premultiplied for additive, see KillZone
+            }
+            tex.SetPixels(px); tex.Apply();
+            return tex;
         }
 
         private static Texture2D MakePuffTexture(int size)

@@ -1,5 +1,5 @@
 <!--
-  Copy this file to  SbgShields.csproj.user  and edit the paths for your machine.
+  Copy this file to  SbgShields.csproj.local  and edit the paths for your machine.
 
   That file is yours alone: it is gitignored and never shipped, so nobody else's
   build breaks because of where you keep Steam. Anything set here overrides the
@@ -28,6 +28,11 @@
     <!-- Optional: copy the built DLL straight into the plugins folder on every
          build, so you only have to restart the game. -->
     <!-- <AutoDeploy>true</AutoDeploy> -->
+
+    <!-- If r2modman manages the mod as a local package, deploy into that package
+         folder rather than the loose plugins root (BepInEx must not see two copies).
+         $(BepInExDir) is not defined yet when this file is read, so spell it out: -->
+    <!-- <DeployDir>$(AppData)\r2modmanPlus-local\SuperBattleGolf\profiles\Super Battle Bros\BepInEx\plugins\hamsterbby-SuperBattleBros</DeployDir> -->
 
   </PropertyGroup>
 </Project>

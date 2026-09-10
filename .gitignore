@@ -1,5 +1,8 @@
-# Machine-specific build paths. Copy SbgShields.csproj.user.example to get started.
-SbgShields.csproj.user
+# Machine-specific build paths. Copy SbgShields.csproj.local.example to get started.
+SbgShields.csproj.local
 
 bin/
 obj/
+
+# Thunderstore zips from package.ps1
+dist/

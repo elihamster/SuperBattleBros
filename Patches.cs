@@ -80,7 +80,7 @@ namespace SbgShields
     [HarmonyPatch(typeof(PlayerMovement), nameof(PlayerMovement.TryKnockOut))]
     internal static class KnockoutEconomyPatch
     {
-        [HarmonyPriority(Priority.Low)]   // can skip the original; see BreakStunHoldPatch
+        [HarmonyPriority(Priority.Low)]   // can skip the original; see RecoveryHoldPatch
         private static bool Prefix(PlayerMovement __instance, KnockoutType knockoutType,
             Vector3 localOrigin, float distance, Vector3 incomingVelocityChange, ref bool __result, ref bool isNewKnockout,
             ref bool blockedByTeamProtection, out bool __state)
@@ -186,26 +186,14 @@ namespace SbgShields
                 catch { }
             }
 
-            if (ShieldState.PendingHitstunAbsolute >= 0f)
-            {
-                t = ShieldState.PendingHitstunAbsolute;
-                // Break stun: also hold the recovery gate shut for exactly this long,
-                // whatever else the game decides (see BreakStunHoldPatch).
-                ShieldState.BreakStunUntil = Time.timeAsDouble + t;
-                ShieldState.LastKnockoutWasBreakStun = true;
-                BreakTrace.Log($"stun applied: timer={t:0.00}s, hold until +{t:0.00}s");
-            }
+            ShieldState.CurrentKnockoutIsBreak = ShieldState.PendingIsBreak;
+            if (ShieldState.PendingHitstunMultiplier >= 0f)
+                t *= ShieldState.PendingHitstunMultiplier;
             else
-            {
-                ShieldState.BreakStunUntil = double.MinValue;
-                ShieldState.LastKnockoutWasBreakStun = false;
-                if (ShieldState.PendingHitstunMultiplier >= 0f)
-                    t *= ShieldState.PendingHitstunMultiplier;
-                else
-                    t *= ShieldState.HitstunMultiplier; // knockout from a path we did not see (should be rare)
-            }
+                t *= ShieldState.HitstunMultiplier; // knockout from a path we did not see (should be rare)
+            if (ShieldState.PendingIsBreak) BreakTrace.Log($"break stun applied: timer={t:0.00}s (x{ShieldState.PendingHitstunMultiplier:0.00})");
 
-            ShieldState.PendingHitstunAbsolute   = -1f;
+            ShieldState.PendingIsBreak           = false;
             ShieldState.PendingHitstunMultiplier = -1f;
 
             if (Plugin.VerboseLogging.Value && Mathf.Abs(before - t) > 0.01f)
@@ -216,16 +204,9 @@ namespace SbgShields
     }
 
     /// <summary>
-    /// Belt and braces for the break stun. The game recovers a knocked-out player
-    /// through RecoverFromKnockout, reached from its recovery timer, its knockout
-    /// time-out, and a few other places. While a break stun is running, refuse
-    /// all of them. Freezing and the direct SetKnockOutState(None) paths
-    /// (teleport, respawn, elimination, invisibility) are untouched.
-    /// </summary>
-    /// <summary>
-    /// Always-on trace of what the game does during a shield-break stun. Fires only
-    /// for a few seconds after a break, so it costs nothing the rest of the time,
-    /// and it is the thing to paste when "the stun does not hold".
+    /// Always-on trace of what the game does after a bubble break. Fires only for a
+    /// few seconds after a break, so it costs nothing the rest of the time, and it is
+    /// the thing to paste when a break does not bounce or does not stun.
     /// </summary>
     internal static class BreakTrace
     {
@@ -246,9 +227,7 @@ namespace SbgShields
             if (!Active) return;
             var mv = GameManager.LocalPlayerInfo != null ? GameManager.LocalPlayerInfo.Movement : null;
             string st = mv != null ? mv.KnockoutState.ToString() : "?";
-            double left = ShieldState.BreakStunUntil - Time.timeAsDouble;
-            string hold = ShieldState.BreakStunUntil == double.MinValue ? "none" : left.ToString("0.00");
-            Plugin.Log.LogInfo($"[break +{Time.timeAsDouble - _start:0.00}s] {what} | state={st} holdLeft={hold}");
+            Plugin.Log.LogInfo($"[break +{Time.timeAsDouble - _start:0.00}s] {what} | state={st}");
         }
     }
 
@@ -259,6 +238,20 @@ namespace SbgShields
         {
             if (!BreakTrace.Active || !Local.Is(__instance.PlayerInfo)) return;
             if (state != __instance.KnockoutState) BreakTrace.Log($"SetKnockOutState {__instance.KnockoutState} -> {state}");
+        }
+    }
+
+    /// <summary>The tumbling body touched down: the tech window closes here.</summary>
+    [HarmonyPatch(typeof(PlayerMovement), "SetKnockOutState")]
+    internal static class TumbleLandingPatch
+    {
+        private static void Prefix(PlayerMovement __instance, out KnockoutState __state) => __state = __instance.KnockoutState;
+
+        private static void Postfix(PlayerMovement __instance, KnockoutState __state)
+        {
+            if (__state != KnockoutState.InAir || __instance.KnockoutState != KnockoutState.OnGround) return;
+            if (!Local.Is(__instance.PlayerInfo)) return;
+            ShieldState.OnTumbleLanded(__instance);
         }
     }
 
@@ -282,8 +275,16 @@ namespace SbgShields
         }
     }
 
+    /// <summary>
+    /// The game recovers a knocked-out player through RecoverFromKnockout, reached
+    /// from its recovery timer, its knockout time-out, and a few other places. Two
+    /// holds live in this one prefix, so exactly one thing decides the method: the
+    /// death launch (never wakes) and the air hold (see AirHold). Freezing and the
+    /// direct SetKnockOutState(None) paths (teleport, respawn, elimination,
+    /// invisibility) are untouched.
+    /// </summary>
     [HarmonyPatch(typeof(PlayerMovement), "RecoverFromKnockout")]
-    internal static class BreakStunHoldPatch
+    internal static class RecoveryHoldPatch
     {
         private static double _lastLog = double.MinValue;
 
@@ -296,43 +297,147 @@ namespace SbgShields
         private static bool Prefix(PlayerMovement __instance)
         {
             if (!Local.Is(__instance.PlayerInfo)) return true;
-            double now = Time.timeAsDouble;
-            if (now >= ShieldState.BreakStunUntil) { BreakTrace.Log("RecoverFromKnockout allowed (hold expired)"); return true; }
-            if (!__instance.IsKnockedOut) { BreakTrace.Log("RecoverFromKnockout allowed (not knocked out)"); return true; }
-            try { if (__instance.PlayerInfo.AsHittable.FrozenState == FrozenState.Frozen) return true; } catch { }
-            if (__instance.IsRespawningOrDrowning) return true;
+            if (!__instance.IsKnockedOut) { BreakTrace.Log("RecoverFromKnockout allowed (not knocked out)"); AirHold.Released(__instance, "not knocked out"); return true; }
+            try { if (__instance.PlayerInfo.AsHittable.FrozenState == FrozenState.Frozen) { AirHold.Released(__instance, "frozen"); return true; } } catch { }
+            if (__instance.IsRespawningOrDrowning) { AirHold.Released(__instance, "respawning"); return true; }
 
-            if (now - _lastLog > 0.5)
+            double now = Time.timeAsDouble;
+
+            // A death launch never wakes up. KillZone fires at the apex and needs the body
+            // still knocked out to get there; if the stun timer ran out first (it does --
+            // the kill boost makes the rise far longer than any stun) the game recovered you
+            // mid-air, KillZone saw a player who was no longer knocked out, and disarmed.
+            // That was "you don't die at 250%". Checked before the air hold so a dead
+            // player gets no bubble either.
+            if (KillZone.IsArmed)
             {
-                _lastLog = now;
-                BreakTrace.Log("RecoverFromKnockout BLOCKED by hold");
+                if (now - _lastLog > 0.5) { _lastLog = now; Plugin.Log.LogInfo("Death launch: holding the knockout until the apex."); }
+                return false;
             }
-            return false;
+
+            if (AirHold.ShouldHold(__instance)) return false;
+            return true;
         }
     }
 
     /// <summary>
-    /// The knockout-immunity bubble the game grants on recovery. After a break
-    /// stun (and only then) its duration is ours, scaled by percent. Every other
-    /// knockout keeps the vanilla rule, including the orange repeat protection.
+    /// The knockout timer ran out while you were still in the air.
+    ///
+    /// Vanilla recovers you on the spot: RecoverFromKnockout's ShouldRecoverInstantly is
+    /// true for any state that is not OnGround, so the state flips straight to None with
+    /// no landing check. Two things happen on that flip. SetKnockOutState starts the
+    /// comeback bubble, and UpdatePhysicsParameters stops using KnockOutGravityFactor:
+    /// the body stops falling like a body and floats down at walking-state gravity.
+    ///
+    /// This keeps the knockout going until the game's own ground check passes, and
+    /// raises the bubble itself at the moment vanilla would have. From the player's
+    /// chair: the bubble appears mid-air and you cannot be juggled, but you keep
+    /// tumbling and fall at the same speed until you hit the ground, then get up as
+    /// usual. On landing SetKnockOutState(Recovering) calls StartKnockoutImmunity,
+    /// which stops the coroutine in knockoutImmunityRoutine (ours) and runs its own
+    /// timer, so the post-recovery immunity is exactly vanilla's.
+    ///
+    /// The game's KnockoutTimeOutDuration is kept as the escape hatch: a body that
+    /// never finds ground (wedged, bouncing) recovers when vanilla would have anyway.
     /// </summary>
-    [HarmonyPatch(typeof(PlayerMovement), "StartKnockoutImmunity")]
-    internal static class BreakImmunityPatch
+    internal static class AirHold
     {
         private static AccessTools.FieldRef<PlayerMovement, Coroutine> _routine;
-        private static AccessTools.FieldRef<PlayerMovement, System.Collections.Generic.List<double>> _recent;
+        private static bool _bound, _bindFailed;
+
+        /// <summary>IsKnockedOutTimestamp of the knockout we already raised the bubble for. A new knockout has a new stamp.</summary>
+        private static double _grantedFor = double.MinValue;
+        private static bool   _holding;
+        private static double _holdingSince;
+
+        internal static bool ShouldHold(PlayerMovement mv)
+        {
+            if (!Plugin.StayDownUntilLanding.Value) return false;
+            if (!ModHandshake.GameplayEnabled) return false;            // standing down: vanilla rules
+            if (mv.KnockoutState != KnockoutState.InAir) { Released(mv, "landed"); return false; }
+
+            float timeout = 30f;
+            try { timeout = GameManager.PlayerMovementSettings.KnockoutTimeOutDuration; } catch { }
+            double since = Time.timeAsDouble - mv.IsKnockedOutTimestamp;
+            if (since >= timeout) { Released(mv, "knockout timed out"); return false; }
+
+            if (_grantedFor != mv.IsKnockedOutTimestamp)
+            {
+                _grantedFor = mv.IsKnockedOutTimestamp;
+                _holding = true;
+                _holdingSince = Time.timeAsDouble;
+                Grant(mv);
+                Plugin.Log.LogInfo($"Stun ended mid-air at {ShieldState.Percent:0}% after {since:0.00}s: bubble up, staying down until landing.");
+            }
+            return true;
+        }
+
+        /// <summary>Logs the end of a hold once. Cheap: the flag is false almost always.</summary>
+        internal static void Released(PlayerMovement mv, string how)
+        {
+            if (!_holding) return;
+            _holding = false;
+            Plugin.Log.LogInfo($"Air hold released ({how}) after {Time.timeAsDouble - _holdingSince:0.00}s; vanilla recovery runs now.");
+        }
+
+        private static bool Bind()
+        {
+            if (_bound) return !_bindFailed;
+            _bound = true;
+            try { _routine = AccessTools.FieldRefAccess<PlayerMovement, Coroutine>("knockoutImmunityRoutine"); }
+            catch (Exception e)
+            {
+                _bindFailed = true;
+                Plugin.Log.LogWarning("knockoutImmunityRoutine not found; the air hold will keep you down but cannot raise the bubble early. " + e.Message);
+            }
+            return !_bindFailed;
+        }
+
+        private static void Grant(PlayerMovement mv)
+        {
+            if (!Bind()) return;
+            try
+            {
+                // Same slot the game uses, so its own StartKnockoutImmunity (on landing,
+                // or on any direct SetKnockOutState(None)) stops this and takes over.
+                ref var routine = ref _routine(mv);
+                if (routine != null) mv.StopCoroutine(routine);
+                routine = mv.StartCoroutine(Bubble(mv));
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("Air hold could not raise the bubble: " + e.Message); }
+        }
+
+        private static System.Collections.IEnumerator Bubble(PlayerMovement m)
+        {
+            m.NetworkknockoutImmunityStatus = PlayerMovement.KnockOutImmunity.Get(KnockOutVfxColor.Blue);
+            while (m != null && m.IsKnockedOutOrRecovering) yield return null;
+            // Still running here means the game never took over (frozen, scored). Clean up.
+            if (m != null) m.NetworkknockoutImmunityStatus = PlayerMovement.KnockOutImmunity.Reset(m.KnockoutImmunityStatus);
+        }
+    }
+
+    /// <summary>
+    /// The immunity the game grants on recovery. After a TECH (and only then) its
+    /// duration is ours: TechImmunity, which may be zero. Every other recovery keeps
+    /// the vanilla rule, including the orange repeat protection. A tech is not added
+    /// to the game's repeat-knockout count: getting up fast should not push you
+    /// toward the long bubble.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerMovement), "StartKnockoutImmunity")]
+    internal static class TechImmunityPatch
+    {
+        private static AccessTools.FieldRef<PlayerMovement, Coroutine> _routine;
 
         private static bool Prepare()
         {
             try
             {
                 _routine = AccessTools.FieldRefAccess<PlayerMovement, Coroutine>("knockoutImmunityRoutine");
-                _recent  = AccessTools.FieldRefAccess<PlayerMovement, System.Collections.Generic.List<double>>("recentKnockoutImmunityTimestamps");
                 return true;
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning("Knockout immunity fields not found; break immunity stays vanilla. " + e.Message);
+                Plugin.Log.LogWarning("knockoutImmunityRoutine not found; a tech gets the vanilla bubble. " + e.Message);
                 return false;
             }
         }
@@ -341,18 +446,11 @@ namespace SbgShields
         private static bool Prefix(PlayerMovement __instance, bool fromPlayerAggression)
         {
             if (!fromPlayerAggression || !Local.Is(__instance.PlayerInfo)) return true;
-            if (!Plugin.BreakImmunityScalesWithPercent.Value) return true;
-            if (!ShieldState.ConsumeBreakStunImmunity()) return true;
+            if (!ShieldState.ConsumeTechRecovery()) return true;
 
-            float duration = ShieldState.BreakImmunityDuration;
-            if (Plugin.VerboseLogging.Value)
-                Plugin.Log.LogInfo($"Break immunity: {duration:0.00}s at {ShieldState.Percent:0}%.");
-
+            float duration = Mathf.Max(0f, Plugin.TechImmunity.Value);
             try
             {
-                // Count it for the game's repeat-hit escalation so vanilla still sees the juggle.
-                _recent(__instance)?.Add(Time.timeAsDouble);
-
                 ref var routine = ref _routine(__instance);
                 if (routine != null) __instance.StopCoroutine(routine);
                 if (duration <= 0.05f)
@@ -366,7 +464,7 @@ namespace SbgShields
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning("Break immunity failed, falling back to vanilla: " + e.Message);
+                Plugin.Log.LogWarning("Tech immunity failed, falling back to vanilla: " + e.Message);
                 return true;
             }
         }
@@ -412,6 +510,9 @@ namespace SbgShields
             if (!Local.Is(__instance.PlayerInfo)) return;
             var rb = _rigidbody(__instance);
             if (rb == null || rb.isKinematic) return;
+
+            // Before the game's own UpdateKnockOutState on this step can start the get-up.
+            ShieldState.TryExecuteTech(__instance, rb);
 
             if (ShieldState.HasPendingVelocityCorrection)
             {
@@ -492,7 +593,8 @@ namespace SbgShields
         private static int _mask;
         private static bool _maskReady;
 
-        private static int Mask()
+        /// <summary>Also the base of the parry's threat search (ShieldState.ArmParryOnRelease adds players and carts).</summary>
+        internal static int Mask()
         {
             if (_maskReady) return _mask;
             try
@@ -554,6 +656,41 @@ namespace SbgShields
             }
 
             ShieldState.ChargeReflection(__instance, cost, what);
+        }
+    }
+
+    /// <summary>
+    /// A bubble break should be heard across the hole, not just next to it. The break
+    /// plays the game's shield-explosion event at the breaker's position, and FMOD
+    /// attenuates it by settings baked into the event, which we cannot edit. So on
+    /// every client farther away than a few metres, play the same event again at a
+    /// point a few metres toward the breaker: same sound, same direction, heard.
+    /// Hangs off the game's own replicated hit call, so it reaches every modded
+    /// client with no message layer. It also fires for the vanilla magnet item's
+    /// explosion, which is the same event and arguably deserves the same treatment.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerInfo), "PlayElectromagnetShieldHitInternal")]
+    internal static class BreakSoundCarryPatch
+    {
+        private const float Near = 8f;   // where the re-played copy sits, in metres from the listener
+
+        private static void Postfix(PlayerInfo __instance, bool isExplosion)
+        {
+            if (!isExplosion || __instance == null) return;
+            float carry = Plugin.BreakSoundCarry.Value;
+            if (carry <= Near) return;
+            try
+            {
+                var cam = GameManager.Camera;
+                if (cam == null) return;
+                Vector3 listener = cam.transform.position;
+                Vector3 src = __instance.ChestBone != null ? __instance.ChestBone.position : __instance.transform.position;
+                Vector3 to = src - listener;
+                float dist = to.magnitude;
+                if (dist <= Near || dist > carry) return;   // close enough to hear it as-is, or out of range
+                FMODUnity.RuntimeManager.PlayOneShot(GameManager.AudioSettings.ElectromagnetShieldExplosionEvent, listener + to / dist * Near);
+            }
+            catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Break sound carry: " + e.Message); }
         }
     }
 

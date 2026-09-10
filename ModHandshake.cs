@@ -33,6 +33,7 @@ namespace SbgShields
             public double FirstSeen;
             public bool   Announced;
             public bool   Warned;
+            public bool   Nudged;     // we re-announced once because they stayed silent
         }
 
         private static readonly Dictionary<ulong, Peer> _peers = new Dictionary<ulong, Peer>();
@@ -107,7 +108,8 @@ namespace SbgShields
             if (!ChatBypass.Send(msg)) return false;
 
             _lastAnnounce = now;
-            if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo("Handshake announced: " + msg);
+            // Always on: when a peer says we never announced, this line is the first thing to check.
+            Plugin.Log.LogInfo($"Handshake announced: {msg} ({(Mirror.NetworkServer.active ? "as host" : "as client")})");
             return true;
         }
 
@@ -119,10 +121,20 @@ namespace SbgShields
         /// </summary>
         internal static bool TryConsume(string message, PlayerInfo sender)
         {
-            if (message == null || sender == null) return false;
+            if (message == null) return false;
             if (!message.StartsWith(Token + "/", StringComparison.Ordinal)) return false;
 
             string version = message.Substring(Token.Length + 1).Trim();
+
+            // A handshake line whose sender did not resolve on this client (their
+            // PlayerInfo not spawned here yet, typically right after a join). We cannot
+            // credit it to anyone, so swallow it and say so; the nudge below gives the
+            // peer a second chance before the timeout.
+            if (sender == null)
+            {
+                Plugin.Log.LogWarning($"Handshake line '{message}' arrived with no sender; could not be credited to a player.");
+                return true;
+            }
 
             // Our own announcement comes back to us. Swallow it, but do not record
             // ourselves as a peer: the departed-player sweep compares against the
@@ -283,6 +295,16 @@ namespace SbgShields
                     problem = $"{NameOf(p)} does not have SBG Shields installed";
                     if (!peer.Warned) { peer.Warned = true; Plugin.Log.LogWarning(problem + "; the mod is standing down."); }
                     break;
+                }
+                else if (!peer.Nudged && now - peer.FirstSeen > timeout * 0.5f)
+                {
+                    // Halfway to giving up on them and still nothing. Our first announce
+                    // may have gone out before their client could credit it (see
+                    // TryConsume), so say hello once more. Bounded: once per peer.
+                    peer.Nudged = true;
+                    _announcePending = true;
+                    _nextAnnounceDue = now;
+                    Plugin.Log.LogInfo($"No announce from {NameOf(p)} after {now - peer.FirstSeen:0}s; announcing once more.");
                 }
             }
 

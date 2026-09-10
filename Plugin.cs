@@ -13,8 +13,12 @@ namespace SbgShields
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid    = "com.sbg.shields";
+#if SBG_DEV
+        public const string Name    = "SBG Shields TEST";   // the dev build says so in its title
+#else
         public const string Name    = "SBG Shields";
-        public const string Version = "0.7.7";
+#endif
+        public const string Version = "0.7.9";
 
         internal static ManualLogSource Log;
 
@@ -29,23 +33,25 @@ namespace SbgShields
         internal static ConfigEntry<float> UseCooldown;
         internal static ConfigEntry<float> BreakCooldown;
         internal static ConfigEntry<bool>  RestoreAfterBreakCooldown;
-        internal static ConfigEntry<float> BreakStunDuration;
-        internal static ConfigEntry<bool>  BreakStunScalesWithPercent;
-        internal static ConfigEntry<float> BreakStunDurationAtMax;
-        internal static ConfigEntry<bool>  PartialBreakLaunches;
+        internal static ConfigEntry<float> BreakBounceSpeed;
+        internal static ConfigEntry<float> BreakStunMultiplier;
+        internal static ConfigEntry<float> BreakSoundCarry;
         internal static ConfigEntry<bool>  RefundPipsOnRefusedKnockout;
-        internal static ConfigEntry<bool>  BreakImmunityScalesWithPercent;
-        internal static ConfigEntry<float> BreakImmunityAtZeroPercent;
-        internal static ConfigEntry<float> BreakImmunityAtMaxPercent;
         internal static ConfigEntry<bool>  AbsorbedHitsCancelKnockback;
         internal static ConfigEntry<float> ReflectionSearchMargin;
         internal static ConfigEntry<string> CostOverrides;
 
         // Percent
+        internal static ConfigEntry<bool>  PercentEnabled;
         internal static ConfigEntry<float> MaxPercent;
+        internal static ConfigEntry<bool>  RageVisual;
+        internal static ConfigEntry<float> RageVisualMinPercent;
         // Parry
         internal static ConfigEntry<bool>  PerfectParry;
-        internal static ConfigEntry<float> PerfectParryWindow;
+        internal static ConfigEntry<float> ParryReach;
+        internal static ConfigEntry<float> ParryArmTime;
+        internal static ConfigEntry<bool>  AimedAtParry;   // experimental, see AimedAt.cs
+        internal static ConfigEntry<float> AimedAtRange;
         internal static ConfigEntry<bool>  PerfectParryBeatsFullBreak;
         internal static ConfigEntry<bool>  PerfectParryBeatsUnblockable;
         internal static ConfigEntry<bool>  PerfectParryRefundsUse;
@@ -56,7 +62,7 @@ namespace SbgShields
         internal static ConfigEntry<float> ParryGlowBoost;
 
         internal static ConfigEntry<float> PercentForMaxScaling;
-        internal static ConfigEntry<float> ForceMultiplierAtKill;
+        internal static ConfigEntry<float> ForceMultiplierAtMax;
         internal static ConfigEntry<float> KnockbackExponent;
         internal static ConfigEntry<float> HitstunMultiplierAtMax;
         internal static ConfigEntry<float> PercentPerHitBase;
@@ -88,7 +94,7 @@ namespace SbgShields
         internal static ConfigEntry<float> MinLaunchAngleAtZero;
         internal static ConfigEntry<float> MinLaunchAngleAtMax;
         internal static ConfigEntry<float> MaxHorizontalLaunchSpeed;
-        internal static ConfigEntry<float> HorizontalMultiplierAtKill;
+        internal static ConfigEntry<float> HorizontalMultiplierAtMax;
         internal static ConfigEntry<float> LaunchDrag;
         internal static ConfigEntry<float> LaunchVerticalDragFactor;
         internal static ConfigEntry<float> LaunchDragDuration;
@@ -97,6 +103,24 @@ namespace SbgShields
         internal static ConfigEntry<float> LaunchHangWindow;
         internal static ConfigEntry<float> LaunchHangDuration;
         internal static ConfigEntry<float> CloudHitMinPercent;
+        internal static ConfigEntry<bool>  StayDownUntilLanding;
+        // Hit categories
+        internal static ConfigEntry<float> ExplosiveForceScale;
+        internal static ConfigEntry<float> BulletForceScale;
+        internal static ConfigEntry<float> MeleeForceScale;
+        internal static ConfigEntry<float> ExplosiveAngleFloorScale;
+        internal static ConfigEntry<float> BulletAngleFloorScale;
+        internal static ConfigEntry<float> MeleeAngleFloorScale;
+        internal static ConfigEntry<float> BulletMaxElevation;
+        // Directional influence
+        internal static ConfigEntry<bool>  DirectionalInfluence;
+        internal static ConfigEntry<float> DIWindow;
+        internal static ConfigEntry<float> DIMaxYaw;
+        internal static ConfigEntry<float> DIMaxPitch;
+        // Teching
+        internal static ConfigEntry<bool>  TechEnabled;
+        internal static ConfigEntry<float> TechWindow;
+        internal static ConfigEntry<float> TechImmunity;
         internal static ConfigEntry<bool>  LaunchTrail;
         internal static ConfigEntry<float> LaunchTrailStartSpeed;
         internal static ConfigEntry<float> LaunchTrailMinPercent;
@@ -136,6 +160,13 @@ namespace SbgShields
 
         // Bubble visual
         internal static ConfigEntry<bool>  TintVanillaShield;
+        internal static ConfigEntry<bool>  PipWarning;
+
+        // Immunity look (the game's comeback shield)
+        internal static ConfigEntry<bool>  ImmunityFlickerEnabled;
+        internal static ConfigEntry<float> ImmunityFlickerRate;
+        internal static ConfigEntry<float> ImmunityFlickerWash;
+        internal static ConfigEntry<bool>  HideGameBubble;
 
 
         // HUD
@@ -250,33 +281,22 @@ namespace SbgShields
                 "Shield HP. Chip hits cost 1-3, big hits break it outright. No regeneration.");
             UseCooldown = Config.Bind("Shield", "UseCooldown", 1.0f,
                 "Seconds after releasing the shield before it can be raised again. Anti-flicker.");
-            BreakCooldown = Config.Bind("Shield", "BreakCooldown", 8.0f,
-                "Seconds the shield is unavailable after it breaks. The punish.");
+            BreakCooldown = Config.Bind("Shield", "BreakCooldown", 10.0f,
+                "Seconds the bubble is unavailable after it breaks. With the bounce being mild, this and the boom are the punish.");
             RestoreAfterBreakCooldown = Config.Bind("Shield", "RestoreAfterBreakCooldown", true,
                 "When the break cooldown ends, restore the shield to full pips. Off = no shield until the next hole.");
-            BreakStunDuration = Config.Bind("Shield", "BreakStunDuration", 2.5f,
-                "Seconds you are stunned in place when a hit breaks the shield, at 0%.");
-            BreakStunScalesWithPercent = Config.Bind("Shield", "BreakStunScalesWithPercent", true,
-                "Break stun grows with percent, from BreakStunDuration to BreakStunDurationAtMax. Turn this off with the rest of the " +
-                "percent rules and every break costs the same flat BreakStunDuration.");
-            BreakStunDurationAtMax = Config.Bind("Shield", "BreakStunDurationAtMax", 3.5f,
-                "Break stun at PercentForMaxScaling. Note this runs OPPOSITE to HitstunMultiplierAtMax on purpose: a launch gives you " +
-                "the air back sooner the more beaten up you are, but a break pins you longer. Getting launched is survivable; losing " +
-                "the shield at high percent should be the moment that costs you. BreakImmunityAtMaxPercent is the compensation.");
-            PartialBreakLaunches = Config.Bind("Shield", "PartialBreakLaunches", false,
-                "Off (default): EVERY break stuns in place, and only percent takes the uncovered fraction of the hit. " +
-                "On: a hit that beat your remaining pips launches you at that fraction with a shortened knockdown instead of stunning. " +
-                "This was the old behaviour and is why partial breaks felt like an instant wake-up.");
+            BreakBounceSpeed = Config.Bind("Shield", "BreakBounceSpeed", 10f,
+                "When a hit breaks the bubble, the hit itself is cancelled and you pop straight up at this speed (m/s), tumble, land, " +
+                "and get up. 10 is about a two-second hop. 0 = you drop where you stand and take the stun there.");
+            BreakStunMultiplier = Config.Bind("Shield", "BreakStunMultiplier", 1.3f,
+                "The break's knockout timer is the game's normal one times this, so a break stuns a little longer than a hit. " +
+                "A break cannot be teched; you sit through it. Immunity afterwards is the game's own.");
+            BreakSoundCarry = Config.Bind("Shield", "BreakSoundCarry", 60f,
+                "Metres out to which a bubble break is heard by other players (the game's own sound fades much sooner). " +
+                "Everyone in that range hears the boom from the right direction. 0 = the game's sound only.");
             RefundPipsOnRefusedKnockout = Config.Bind("Shield", "RefundPipsOnRefusedKnockout", true,
                 "If the game refuses the knockout after your shield spent pips on the hit (comeback immunity, team protection, " +
                 "frozen, self hit), give the pips back. The bubble still pops, but a hit that could never stun you does not cost you the shield.");
-            BreakImmunityScalesWithPercent = Config.Bind("Shield", "BreakImmunityScalesWithPercent", true,
-                "After a break stun, the knockout-immunity bubble (the blue one) lasts a percent-scaled time instead of the match rule. " +
-                "Every other knockout keeps the vanilla immunity, including the orange repeat protection.");
-            BreakImmunityAtZeroPercent = Config.Bind("Shield", "BreakImmunityAtZeroPercent", 0.5f,
-                "Seconds of immunity after a break stun at 0%. Swap the two values to make high percent LESS protected instead.");
-            BreakImmunityAtMaxPercent = Config.Bind("Shield", "BreakImmunityAtMaxPercent", 3.0f,
-                "Seconds of immunity after a break stun at PercentForMaxScaling. Default gives more breathing room the more beaten up you are.");
             AbsorbedHitsCancelKnockback = Config.Bind("Shield", "AbsorbedHitsCancelKnockback", true,
                 "Chip hits that the shield absorbs also cancel the pushback. Off = vanilla shove-while-shielded.");
             ReflectionSearchMargin = Config.Bind("Shield", "ReflectionSearchMargin", 1.5f,
@@ -293,13 +313,35 @@ namespace SbgShields
                 "ElectromagnetShieldExplosion. Defaults: pistols/untargeted balls 1; backblast/peripheral 2; carts/vehicles/rocket driver/mines 3; " +
                 "swings/targeted balls/rockets/freeze/giant = full; laser/thunder/railgun direct = unblockable.");
 
+            // The three master switches. Each layer comes off cleanly on its own:
+            //   Shield.ShieldAbsorbsHits  - pips. Off = vanilla shield: blocks everything, never breaks.
+            //   Percent.PercentEnabled    - percent. Off = no number, no scaling, vanilla knockback, no kill.
+            //   Percent.KillZoneEnabled   - death. Off = percent climbs to MaxPercent and nothing more.
+            PercentEnabled = Config.Bind("Percent", "PercentEnabled", true,
+                "The percent layer. Off = no percent is ever gained or shown, knockback and stun are exactly the game's, and " +
+                "the kill zone cannot fire. The shield and its pips keep working (see Shield.ShieldAbsorbsHits for that layer).");
             MaxPercent = Config.Bind("Percent", "MaxPercent", 300f, "Percent cap.");
+            RageVisual = Config.Bind("Percent", "RageVisual", true,
+                "Embers rise off your body once you are past RageVisualMinPercent, thicker and redder the closer to the kill line. " +
+                "Only you see it: nobody else's client knows your percent yet.");
+            RageVisualMinPercent = Config.Bind("Percent", "RageVisualMinPercent", 100f, "Percent at which the embers start.");
             PerfectParry = Config.Bind("Parry", "PerfectParry", true,
-                "A hit that lands just as you DROP the shield is a perfect parry: fully absorbed, no pips spent, no percent gained. " +
-                "Holding the shield out and getting hit is an ordinary block; letting go into the hit is the read.");
-            PerfectParryWindow = Config.Bind("Parry", "PerfectParryWindow", 0.2f,
-                "Seconds after you release the shield key during which a hit counts as a perfect parry. This is the whole difficulty " +
-                "knob: 0.2 is forgiving, 0.1 asks for a real read. Only a deliberate release opens it -- a shield that broke does not.");
+                "Letting go of the shield with a threat in reach is a perfect parry: that hit is fully absorbed, no pips spent, no " +
+                "percent gained. Holding the shield out and getting hit is an ordinary block; letting go into the hit is the read.");
+            ParryReach = Config.Bind("Parry", "ParryReach", 1.5f,
+                "Metres past the edge of your bubble that count as 'in reach' when you let go. Anything moving in there (ball, rocket, " +
+                "bomb, cart, whatever the game treats as a moving object) or a golfer winding up or swinging in there arms a parry. " +
+                "Nothing in reach = nothing armed, so you cannot fish for a parry by tapping the shield. This is the difficulty knob.");
+            ParryArmTime = Config.Bind("Parry", "ParryArmTime", 0.5f,
+                "Seconds an armed parry stays live, so what was in reach has time to actually arrive. Not a timing window you aim for: " +
+                "with nothing in reach at release it never opens at all.");
+            AimedAtParry = Config.Bind("Parry", "AimedAtParry", true,
+                "EXPERIMENTAL. Guns are instant, so nothing is ever in reach to arm a parry against them. Instead: another player " +
+                "aiming an item along a line through your bubble when you let go arms a parry, the same as a projectile in reach. " +
+                "Reads the shooter's aim yaw only (pitch is not networked), so it is a horizontal corridor. Off = guns cannot be parried.");
+            AimedAtRange = Config.Bind("Parry", "AimedAtRange", 50f,
+                "Metres out to which a player aiming at you counts. The log prints the game's real pistol and elephant gun ranges " +
+                "the first time this runs; match it to the longer of the two.");
             PerfectParryBeatsFullBreak = Config.Bind("Parry", "PerfectParryBeatsFullBreak", true,
                 "A perfect parry stops the hits that normally break the shield outright (swings, carts, targeted balls). " +
                 "This is the point of the mechanic: timing beats a hit that pips cannot.");
@@ -310,11 +352,11 @@ namespace SbgShields
             PerfectParrySound = Config.Bind("Parry", "PerfectParrySound", true,
                 "Play the game's own blocked-knockout sound on a parry, over the normal shield hit.");
 
-            ParryLinger = Config.Bind("Parry", "ParryLinger", 0.2f,
-                "Seconds the shield stays physically up after you let go of the key. You get your movement back immediately -- only the " +
-                "shield's body lingers. This is what makes a parry visible to everyone else: while the shield exists the game does its " +
-                "own work, so homing balls bounce back at whoever threw them and the shield-hit sound plays on every client. " +
-                "0 = the shield vanishes with the keypress and parries are silent to everyone but you.");
+            ParryLinger = Config.Bind("Parry", "ParryLinger", 0f,
+                "Seconds the shield's body stays up after you let go of the key, while you already have your movement back. " +
+                "OFF by default since 0.7.8: the parry no longer needs it (it is armed by what is in reach when you let go), and a " +
+                "bubble trailing behind a player who is already running reads wrong. Above 0 it brings back the old side effect: " +
+                "while the body exists the game reflects homing balls off it and plays the shield-hit sound on every client.");
             ParryGlow = Config.Bind("Parry", "ParryGlow", true,
                 "Flash the shield bright when a parry lands.");
             ParryGlowDuration = Config.Bind("Parry", "ParryGlowDuration", 0.35f, "How long the parry flash lasts, in seconds.");
@@ -323,18 +365,19 @@ namespace SbgShields
                 "intensity, so this multiplies rather than washing out to white.");
 
             PercentForMaxScaling = Config.Bind("Percent", "PercentForMaxScaling", 100f,
-                "Percent at which the things that SATURATE (angle floor, hang time, hitstun, break immunity, HUD shake) reach their max. " +
-                "Knockback itself does not use this -- it keeps climbing to KillPercent.");
-            ForceMultiplierAtKill = Config.Bind("Percent", "ForceMultiplierAtKill", 6f,
-                "Knockback speed multiplier at the kill line. 1.0x at 0%, and the curve between is set by KnockbackExponent. " +
-                "Defaults give roughly: 40% 1.4x, 80% 1.9x, 100% 2.3x, 150% 3.3x, 200% 4.6x, 250% 6x.");
+                "Percent at which everything percent-driven reaches its max: knockback, angle floor, hang time, hitstun, break " +
+                "immunity, HUD shake. Past this point hits do not get any bigger; the only thing left to climb to is the kill line.");
+            ForceMultiplierAtMax = Config.Bind("Percent", "ForceMultiplierAtMax", 2.3f,
+                "Knockback speed multiplier at PercentForMaxScaling and above. 1.0x at 0%, curve between set by KnockbackExponent. " +
+                "Defaults give roughly: 40% 1.3x, 60% 1.6x, 80% 1.9x, 100%+ 2.3x. This is the tallest an ordinary launch ever gets; " +
+                "only the kill boost goes higher, so a player flying off screen is always a dead one.");
             KnockbackExponent = Config.Bind("Percent", "KnockbackExponent", 1.5f,
-                "Shape of the knockback curve. 1 = straight line to the kill line. Higher = flatter early, steeper late. 2 is very back-loaded.");
+                "Shape of the knockback curve. 1 = straight line to PercentForMaxScaling. Higher = flatter early, steeper late. 2 is very back-loaded.");
             HitstunMultiplierAtMax = Config.Bind("Percent", "HitstunMultiplierAtMax", 0.8f,
                 "Knockout duration multiplier at PercentForMaxScaling, interpolated from 1.0x at 0%. BELOW 1 by default: the hit that " +
-                "sends you furthest is also the one that gives you back the earliest, so on a big launch the stun runs out mid-air and " +
-                "you dive where you want to land. Above 1 gives the old behaviour (longer stun the more beaten up you are), which " +
-                "reads as being juggled. Set 1.0 for vanilla stun at every percent.");
+                "sends you furthest is also the one whose timer ends soonest. With StayDownUntilLanding on, that is when the comeback " +
+                "bubble comes up mid-air while you keep tumbling; with it off, that is when you wake up in the air. Above 1 gives " +
+                "longer stun the more beaten up you are, which reads as being juggled. Set 1.0 for vanilla stun at every percent.");
             PercentPerHitBase = Config.Bind("Percent", "PercentPerHitBase", 5f,
                 "Percent gained by any chip-class hit, before the per-pip part.");
             PercentPerPip = Config.Bind("Percent", "PercentPerPip", 4f,
@@ -386,8 +429,8 @@ namespace SbgShields
                 "Minimum launch elevation in degrees at 0%. Low = the hit direction decides.");
             MinLaunchAngleAtMax = Config.Bind("Launch", "MinLaunchAngleAtMax", 28f,
                 "Minimum launch elevation in degrees at PercentForMaxScaling. 90 = straight up. Kept low so launches stay punishable.");
-            HorizontalMultiplierAtKill = Config.Bind("Launch", "HorizontalMultiplierAtKill", 2.0f,
-                "EXTRA horizontal multiplier at the kill line, on top of the force multiplier, on the same curve. " +
+            HorizontalMultiplierAtMax = Config.Bind("Launch", "HorizontalMultiplierAtMax", 1.25f,
+                "EXTRA horizontal multiplier at PercentForMaxScaling and above, on top of the force multiplier, on the same curve. " +
                 "This is what makes late hits go away rather than up. The cap below still applies afterwards.");
             MaxHorizontalLaunchSpeed = Config.Bind("Launch", "MaxHorizontalLaunchSpeed", 34f,
                 "Horizontal speed cap (m/s); excess becomes height. 0 = no cap. This is the knob that decides how much of a big launch " +
@@ -410,6 +453,46 @@ namespace SbgShields
                 "Seconds after a launch during which hang time can apply.");
             CloudHitMinPercent = Config.Bind("Launch", "CloudHitMinPercent", 125f,
                 "Percent at or above which a launch counts as a cloud hit. Hang time is the only thing left that reads it.");
+            // Hit categories. Everything the mod does to a launch is a multiplier on the
+            // game's own number, so the ordering explosive > bullet > melee holds only if
+            // the game's base speeds do not invert it. The verbose "Hit <type>" line prints
+            // the category and |v| in and out; tune from that.
+            ExplosiveForceScale = Config.Bind("Launch", "ExplosiveForceScale", 1.0f,
+                "Multiplier on explosive launches (rockets, mines, back blast, bombs, laser/thunder peripheral). The biggest hits.");
+            BulletForceScale = Config.Bind("Launch", "BulletForceScale", 0.85f,
+                "Multiplier on bullet launches (pistol, elephant gun, deflected shots, railgun). Below explosives.");
+            MeleeForceScale = Config.Bind("Launch", "MeleeForceScale", 0.7f,
+                "Multiplier on everything else: swings, balls, carts, vehicles. The smallest hits.");
+            ExplosiveAngleFloorScale = Config.Bind("Launch", "ExplosiveAngleFloorScale", 1.0f,
+                "How much of the percent-scaled elevation floor (MinLaunchAngleAtZero..AtMax) explosions get. 1 = all of it: blasts lift.");
+            BulletAngleFloorScale = Config.Bind("Launch", "BulletAngleFloorScale", 0f,
+                "Same for bullets. 0 = no floor: a shot shoves you along the ground in the direction it came from.");
+            MeleeAngleFloorScale = Config.Bind("Launch", "MeleeAngleFloorScale", 0.5f,
+                "Same for melee. Half the floor: a club pops you a little, not into the sky.");
+            BulletMaxElevation = Config.Bind("Launch", "BulletMaxElevation", 15f,
+                "Ceiling in degrees on a bullet launch's elevation, so getting shot never reads as taking off. 90 = no ceiling.");
+
+            DirectionalInfluence = Config.Bind("Launch", "DirectionalInfluence", true,
+                "DI, Smash-style, on the raw stick / WASD: W (stick up) makes the launch steeper and higher, S flatter and lower, " +
+                "by up to DIMaxPitch; A and D curve the flight left or right of where it is going, by up to DIMaxYaw. Speed is " +
+                "unchanged, so it is where you land, not how far. Read once, from the first input inside DIWindow.");
+            DIWindow = Config.Bind("Launch", "DIWindow", 0.15f, "Seconds after the hit during which your stick is read for DI.");
+            DIMaxYaw = Config.Bind("Launch", "DIMaxYaw", 20f, "Degrees of sideways curve at full stick (A/D).");
+            DIMaxPitch = Config.Bind("Launch", "DIMaxPitch", 10f, "Degrees of up/down steer at full stick (W/S).");
+
+            TechEnabled = Config.Bind("Launch", "TechEnabled", true,
+                "Press the shield key just before your tumbling body hits the ground and you tech: up and actionable instantly, " +
+                "no lie-down, no get-up animation. The trade: a missed tech gives you the game's full comeback bubble through " +
+                "the get-up; a tech gives you only TechImmunity. Break stuns and death launches cannot be teched.");
+            TechWindow = Config.Bind("Launch", "TechWindow", 0.2f, "Seconds before landing in which the press counts.");
+            TechImmunity = Config.Bind("Launch", "TechImmunity", 0.2f,
+                "Seconds of comeback bubble after a tech. 0 = none at all; you are up and fully hittable.");
+
+            StayDownUntilLanding = Config.Bind("Launch", "StayDownUntilLanding", true,
+                "When the knockout timer runs out while you are still in the air, the comeback bubble comes up on the spot but you " +
+                "keep tumbling and falling at knockout speed until you hit the ground, then get up as normal. " +
+                "Off = vanilla: the game wakes you in mid-air the instant the timer ends, and from then on you fall at walking-state " +
+                "gravity, which reads as floating down.");
             LaunchTrail = Config.Bind("Launch", "LaunchTrail", true,
                 "Skin-colored smoke trail on any player flying fast while knocked out.");
             LaunchTrailStartSpeed = Config.Bind("Launch", "LaunchTrailStartSpeed", 12f,
@@ -447,8 +530,8 @@ namespace SbgShields
             BlockAimWhileShielded = Config.Bind("Rooting", "BlockAimWhileShielded", true,
                 "No aiming while the shield is up. Swapping weapons is still allowed.");
             BreakStunIgnoresComebackImmunity = Config.Bind("Rooting", "BreakStunIgnoresComebackImmunity", true,
-                "A hit that breaks your shield stuns you even if the game's comeback bubble is up. Off = vanilla behaviour, " +
-                "where comeback protection refuses the knockout and you get no stun at all.");
+                "A hit that breaks your bubble knocks you out (the bounce) even if the game's comeback shield is up. Off = vanilla " +
+                "behaviour, where comeback protection refuses the knockout and the break costs you only the bubble.");
             RequireAllPlayersModded = Config.Bind("Network", "RequireAllPlayersModded", true,
                 "Stand down (vanilla rules, no shield, no percent) unless every other player in the lobby is running this exact version. " +
                 "Players announce themselves over the game's own chat channel; anyone without the mod sees one line of plain text saying who is modded. " +
@@ -463,6 +546,18 @@ namespace SbgShields
 
             TintVanillaShield = Config.Bind("Bubble", "TintVanillaShield", true,
                 "Recolor the game's own shield particle (hold, dissolve, hit sparks, break) to your skin color for the Shift shield. The magnet item stays team-colored.");
+            PipWarning = Config.Bind("Bubble", "PipWarning", true,
+                "Blink the bubble when it is down to its last pip: one more chip breaks it. Needs TintVanillaShield.");
+
+            ImmunityFlickerEnabled = Config.Bind("Immunity", "Flicker", true,
+                "Smash-style invulnerability: a player's body flickers washed-out white while the game's comeback shield is up. " +
+                "Drawn on every client for every player, from the same networked state the game uses to refuse hits.");
+            ImmunityFlickerRate = Config.Bind("Immunity", "FlickerRate", 10f, "Flickers per second.");
+            ImmunityFlickerWash = Config.Bind("Immunity", "FlickerWash", 0.75f,
+                "How far toward white the body goes on the bright phase (0 = no change, 1 = pure white).");
+            HideGameBubble = Config.Bind("Immunity", "HideGameBubble", false,
+                "Also hide the game's own blue/orange/red bubble while the flicker runs, so the flicker is the only tell. " +
+                "Off until it has been seen in play; the two together may be too much or just right.");
 
             ShowHud = Config.Bind("HUD", "ShowHud", true, "Show the percent + bubble readiness overlay.");
             HudScale = Config.Bind("HUD", "HudScale", 1.0f, "Overall HUD scale.");
@@ -549,6 +644,16 @@ namespace SbgShields
             "Percent.HitstunMultiplierAtMax",
             // 0.7.4: launches carry further before the cap turns reach into altitude.
             "Launch.MaxHorizontalLaunchSpeed", "Launch.HorizontalMultiplierAtKill",
+            // 0.7.8: knockback now saturates at PercentForMaxScaling. ForceMultiplierAtKill and
+            // HorizontalMultiplierAtKill were replaced by *AtMax with new defaults (new keys, no reset needed).
+            // The parry is armed by reach now, so the linger is off; PerfectParryWindow no longer exists.
+            "Parry.ParryLinger",
+            // Also 0.7.8: PartialBreakLaunches deleted (it was the instant-wake-up bug behind a toggle).
+            // New entries: PercentEnabled, hit categories, DI, tech, PipWarning, RageVisual.
+            // Break rework: stun-in-place and its six knobs replaced by BreakBounceSpeed / BreakStunMultiplier /
+            // BreakSoundCarry; the cooldown is now the punish and went 8 -> 10.
+            "Shield.BreakCooldown",
+            // 0.7.9: no defaults changed. Parry scan fix, bright pip blink, handshake nudge + diagnostics, HUD reason line.
         };
 
         private void ResetConfigIfVersionChanged()
@@ -581,6 +686,7 @@ namespace SbgShields
             try { ShieldTint.DestroyAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { LaunchVfx.DestroyAll(); }  catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { KillZone.DestroyAll(); }   catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
+            try { ImmunityFlicker.ClearAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { Hud.Shutdown(); }          catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { CourseManager.MatchStateChanged -= OnMatchStateChanged; } catch { }
             _harmony?.UnpatchSelf();
@@ -607,6 +713,7 @@ namespace SbgShields
             ShieldTint.Tick();
             LaunchVfx.Tick();
             KillZone.Tick();
+            ImmunityFlicker.Tick();
 
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
@@ -640,6 +747,7 @@ namespace SbgShields
 #endif
 
             bool held = keyboard.leftShiftKey.isPressed;
+            if (keyboard.leftShiftKey.wasPressedThisFrame) ShieldState.NoteShieldPress(player);   // tech input
 
             // Comeback bubble came up while shielding: drop it, the pips are wasted otherwise.
             if (_weActivated && BlockActivationDuringImmunity.Value && HasKnockoutImmunity(player))
@@ -648,8 +756,8 @@ namespace SbgShields
                 ReleaseShield();
             }
 
-            // Climbing into a cart, or springing, with the shield up drops it.
-            if (_weActivated && (IsInGolfCart(player) ||
+            // Climbing into a cart, springing, or a new hole's countdown starting with the shield up drops it.
+            if (_weActivated && (IsInGolfCart(player) || InTeeOffCountdown() ||
                 (BlockActivationDuringSpringBoots.Value && IsUsingSpringBoots(player))))
                 ReleaseShield();
 
@@ -682,45 +790,67 @@ namespace SbgShields
         /// out, respawning, diving, swinging, mid-air if disallowed). Shared by the
         /// activation gate and the HUD, so the icon hides exactly when Shift would do nothing.
         /// </summary>
-        internal static bool ActivationBlockedByState(PlayerInfo player) => ActivationBlockedByState(player, false);
+        internal static bool ActivationBlockedByState(PlayerInfo player) => ActivationBlockedByState(player, false, out _);
+        internal static bool ActivationBlockedByState(PlayerInfo player, bool forHud) => ActivationBlockedByState(player, forHud, out _);
 
         /// <param name="forHud">
         /// The HUD passes true so the icon does not blink out for the second or two of
         /// comeback immunity after every recovery. Input still respects it.
         /// </param>
-        internal static bool ActivationBlockedByState(PlayerInfo player, bool forHud)
+        /// <param name="why">The first reason that blocked, for the HUD's diagnostic line. Null when not blocked.</param>
+        internal static bool ActivationBlockedByState(PlayerInfo player, bool forHud, out string why)
         {
-            if (player == null) return true;
+            why = null;
+            if (player == null) { why = "no local player"; return true; }
             // The gate is checked HERE, not only in the HUD: without this the shield is
             // still raisable while standing down, which made the whole stand-down a lie.
-            if (!ModHandshake.GameplayEnabled) return true;
-            if (!forHud && BlockActivationDuringImmunity.Value && HasKnockoutImmunity(player)) return true;
-            if (BlockActivationInMenus.Value && AnyMenuOpen()) return true;
-            if (KillZone.IsLingering) return true;
-            if (IsInGolfCart(player)) return true;
+            if (!ModHandshake.GameplayEnabled) { why = "standing down"; return true; }
+            if (!forHud && BlockActivationDuringImmunity.Value && HasKnockoutImmunity(player)) { why = "comeback shield up"; return true; }
+            if (BlockActivationInMenus.Value)
+            {
+                string menu = OpenMenuName();
+                if (menu != null) { why = menu + " open"; return true; }
+            }
+            if (InTeeOffCountdown()) { why = "tee-off countdown"; return true; }
+            if (KillZone.IsLingering) { why = "dead"; return true; }
+            if (IsInGolfCart(player)) { why = "in a cart"; return true; }
             var movement = player.Movement;
             if (movement != null)
             {
-                if (!AllowMidAirActivation.Value && !movement.IsGrounded) return true;
-                if (movement.IsKnockedOutOrRecovering || movement.IsRespawningOrDrowning) return true;
-                if (movement.DivingState != DivingState.None) return true; // no shield out of a dive
+                if (!AllowMidAirActivation.Value && !movement.IsGrounded) { why = "in the air"; return true; }
+                if (movement.IsKnockedOutOrRecovering) { why = "knocked out"; return true; }
+                if (movement.IsRespawningOrDrowning) { why = "respawning"; return true; }
+                if (movement.DivingState != DivingState.None) { why = "diving"; return true; }
             }
-            if (BlockActivationDuringSpringBoots.Value && IsUsingSpringBoots(player)) return true;
+            if (BlockActivationDuringSpringBoots.Value && IsUsingSpringBoots(player)) { why = "spring boots"; return true; }
             var golfer = player.AsGolfer;
-            if (BlockActivationDuringSwing.Value && golfer != null && (golfer.IsChargingSwing || golfer.IsSwinging))
-                return true;
+            if (BlockActivationDuringSwing.Value && golfer != null && (golfer.IsChargingSwing || golfer.IsSwinging)) { why = "swinging"; return true; }
             return false;
         }
 
-        /// <summary>Any full-screen or modal UI that eats gameplay input.</summary>
-        internal static bool AnyMenuOpen()
+        /// <summary>Which full-screen or modal UI is eating gameplay input, or null.</summary>
+        internal static string OpenMenuName()
         {
-            try { if (PauseMenu.IsPaused) return true; } catch { }
-            try { if (Scoreboard.IsVisible) return true; } catch { }
-            try { if (TextChatUi.IsOpen) return true; } catch { }
-            try { if (RadialMenu.IsVisible) return true; } catch { }
-            return false;
+            try { if (PauseMenu.IsPaused) return "pause menu"; } catch { }
+            try { if (Scoreboard.IsVisible) return "scoreboard"; } catch { }
+            try { if (TextChatUi.IsOpen) return "text chat"; } catch { }
+            try { if (RadialMenu.IsVisible) return "emote wheel"; } catch { }
+            return null;
         }
+
+        /// <summary>
+        /// The 3-2-1 before a hole starts. In the game's state machine that IS
+        /// MatchState.TeeOff: CourseManager shows the countdown on entering TeeOff and
+        /// flips to Ongoing the frame it reaches zero. Nobody can be hit yet, so a
+        /// shield here only burns the use cooldown and looks odd.
+        /// </summary>
+        internal static bool InTeeOffCountdown()
+        {
+            try { return CourseManager.MatchState == MatchState.TeeOff; } catch { return false; }
+        }
+
+        /// <summary>Any full-screen or modal UI that eats gameplay input.</summary>
+        internal static bool AnyMenuOpen() => OpenMenuName() != null;
 
         /// <summary>The game's own knockout-immunity bubble: blue recovery protection or gold repeat protection.</summary>
         internal static bool HasKnockoutImmunity(PlayerInfo player)
@@ -773,7 +903,8 @@ namespace SbgShields
             // the vfx hook still knows this was our shield.
             _weActivated = false;
             LastOurShieldReleaseTime = Time.timeAsDouble;
-            ShieldState.LoweredAt = Time.timeAsDouble;   // the parry window starts here
+            ShieldState.LoweredAt = Time.timeAsDouble;
+            ShieldState.ArmParryOnRelease(player);       // looks around the bubble while its collider still exists
             ShieldState.OnShieldReleased();
 
             float linger = Mathf.Max(0f, ParryLinger.Value);

@@ -111,8 +111,6 @@ namespace SbgShields
             }
 
             ShieldState.Percent = Mathf.Max(0f, Plugin.PercentAfterKillZoneDeath.Value);
-            ShieldState.BreakStunUntil = double.MinValue;
-            ShieldState.LastKnockoutWasBreakStun = false;
 
             // Vanish on the spot. The camera keeps looking at where you were, which is
             // the pause that makes the death land. Then the normal respawn.

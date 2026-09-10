@@ -189,7 +189,7 @@ namespace SbgShields
 
             // No percent outside a hole: the range and the lobby are practice space,
             // so the shield works but the number is meaningless there.
-            bool showPercent = ShieldState.InPlayableHole;
+            bool showPercent = ShieldState.InPlayableHole && Plugin.PercentEnabled.Value;
 
             // Percent bottom centre, measured at its widest (the shake punch) so the
             // icon to its right never overlaps, even at 300%.
@@ -219,8 +219,17 @@ namespace SbgShields
             // screen, counting down, and pips are hidden during the cooldown.
             bool up = player.IsElectromagnetShieldActive;
             bool onBreakCd = ShieldState.IsOnBreakCooldown || (ShieldState.Pips <= 0 && !Plugin.RestoreAfterBreakCooldown.Value);
-            bool blocked = !up && Plugin.ActivationBlockedByState(player, true);
+            bool blocked = Plugin.ActivationBlockedByState(player, true, out string why) && !up;
             bool showIcon = up || !blocked || onBreakCd;
+
+            // Always-on, once per change: "the icon is not there" has a dozen possible
+            // reasons and this is the line that names the one in effect.
+            string hideReason = showIcon ? null : why;
+            if (hideReason != _lastHideReason)
+            {
+                _lastHideReason = hideReason;
+                Plugin.Log.LogInfo(hideReason == null ? "HUD: bubble icon shown." : $"HUD: bubble icon hidden ({hideReason}).");
+            }
             bool showPips = Plugin.ShowPipDots.Value && showIcon && !onBreakCd && ShieldState.Pips > 0;
             if (showPips && !_pipsWereShown) _pipsShownAt = Time.timeAsDouble;
             _pipsWereShown = showPips;
@@ -237,6 +246,7 @@ namespace SbgShields
 
         private static bool   _pipsWereShown;
         private static double _pipsShownAt = double.MinValue;
+        private static string _lastHideReason = "(never drawn)";
 
         /// <summary>Ease-out-back: overshoots a little, like a pop.</summary>
         private static float PopEase(float t)
