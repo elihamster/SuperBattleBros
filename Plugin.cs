@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.17";
+        public const string Version = "0.7.18";
 
         internal static ManualLogSource Log;
 
@@ -122,7 +122,6 @@ namespace SbgShields
         internal static ConfigEntry<bool>  DirectionalInfluence;
         internal static ConfigEntry<float> DIWindow;
         internal static ConfigEntry<float> DIMaxYaw;
-        internal static ConfigEntry<float> DIMaxPitch;
         // Teching
         internal static ConfigEntry<bool>  TechEnabled;
         internal static ConfigEntry<float> TechWindow;
@@ -503,12 +502,12 @@ namespace SbgShields
                 "Ceiling in degrees on a bullet launch's elevation, so getting shot never reads as taking off. 90 = no ceiling.");
 
             DirectionalInfluence = Config.Bind("Launch", "DirectionalInfluence", true,
-                "DI, Smash-style, on the raw stick / WASD: W (stick up) makes the launch steeper and higher, S flatter and lower, " +
-                "by up to DIMaxPitch; A and D curve the flight left or right of where it is going, by up to DIMaxYaw. Speed is " +
-                "unchanged, so it is where you land, not how far. Read once, from the first input inside DIWindow.");
+                "DI. As you are launched, push the stick toward where on the screen you want to drift and the launch bends that " +
+                "way, by up to DIMaxYaw. W is into the screen, S toward the camera, A and D screen left and right: the same " +
+                "camera-relative stick you walk with. Speed and height are unchanged, so it is where you land, not how far. " +
+                "Read once, from the first input inside DIWindow.");
             DIWindow = Config.Bind("Launch", "DIWindow", 0.15f, "Seconds after the hit during which your stick is read for DI.");
-            DIMaxYaw = Config.Bind("Launch", "DIMaxYaw", 20f, "Degrees of sideways curve at full stick (A/D).");
-            DIMaxPitch = Config.Bind("Launch", "DIMaxPitch", 10f, "Degrees of up/down steer at full stick (W/S).");
+            DIMaxYaw = Config.Bind("Launch", "DIMaxYaw", 20f, "Degrees the launch can be turned toward the stick, at full stick.");
 
             TechEnabled = Config.Bind("Launch", "TechEnabled", true,
                 "Press the shield key just before your tumbling body hits the ground and you tech: up and actionable instantly, " +

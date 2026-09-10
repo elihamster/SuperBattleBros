@@ -1,3 +1,4 @@
+using HarmonyLib;
 using UnityEngine;
 
 namespace SbgShields
@@ -7,19 +8,18 @@ namespace SbgShields
     ///
     ///  - IS CLOUD HIT gates hang time to launches taken at or above CloudHitMinPercent.
     ///  - DIRECTIONAL INFLUENCE: for DIWindow after the hit, the first real stick input
-    ///    bends the launch, Smash-style. The stick's vertical axis (W/S) steepens or
-    ///    flattens it by up to DIMaxPitch; its horizontal axis (A/D) curves the flight
-    ///    left or right of where it is going by up to DIMaxYaw. Speed never changes,
-    ///    so it is where you land, not how far.
+    ///    bends the launch. Push toward where on the SCREEN you want to drift and the
+    ///    launch's horizontal direction turns toward it, by up to DIMaxYaw at full
+    ///    stick. W is into the screen, S is toward the camera, A and D are screen left
+    ///    and right: the same camera-relative stick the game uses for walking. Speed
+    ///    and elevation never change, so it is where you land, not how far or how high.
     ///
-    ///    Why the raw stick and not the camera-relative world vector: on a keyboard
-    ///    "W" has to mean one thing. Camera-relative, W was "toward wherever the camera
-    ///    looks", which flipped between higher and flatter depending on which side you
-    ///    were hit from. Raw, W is always up, the way a Smash player holds up to
-    ///    survive. Smash reads DI on the hit frame; reading the first input inside a
-    ///    short window is the same idea with a little forgiveness for reaction time.
-    ///    Local: the launch is the victim's own velocity, which replicates like any
-    ///    movement.
+    ///    An earlier version turned the launch left or right of its own travel, so A
+    ///    meant screen-left when you flew away from the camera and screen-right when
+    ///    you flew toward it. Camera-relative has one rule and no exceptions. Smash
+    ///    reads DI on the hit frame; reading the first input inside a short window is
+    ///    the same idea with a little forgiveness for reaction time. Local: the launch
+    ///    is the victim's own velocity, which replicates like any movement.
     ///
     /// Two features used to live here and are gone. The APEX WAKE-UP ended the
     /// knockout at the top of the arc; it was replaced by hitstun getting SHORTER as
@@ -79,17 +79,35 @@ namespace SbgShields
             if (down && now - _startedAt > 0.2) End("landed");
         }
 
+        // The game's camera-relative stick, already turned into a world direction: the
+        // one walking uses. Private, but written every frame by ProcessMovementInput
+        // whether or not movement is suppressed, which is exactly what we need.
+        private static AccessTools.FieldRef<PlayerMovement, Vector3> _rawWorldMove;
+        private static bool _rawLooked, _rawFailed;
+
+        private static bool BindInput()
+        {
+            if (_rawLooked) return !_rawFailed;
+            _rawLooked = true;
+            try { _rawWorldMove = AccessTools.FieldRefAccess<PlayerMovement, Vector3>("rawWorldMoveVector3d"); }
+            catch (System.Exception e)
+            {
+                _rawFailed = true;
+                Plugin.Log.LogWarning("rawWorldMoveVector3d not found; directional influence disabled. " + e.Message);
+            }
+            return !_rawFailed;
+        }
+
         private static void TryDirectionalInfluence(PlayerMovement mv, Rigidbody rb)
         {
-            if (rb == null) { _diDone = true; return; }
+            if (rb == null || !BindInput()) { _diDone = true; return; }
 
-            // The game's raw stick: x = A/D, y = W/S, public, written every frame by
-            // PlayerInput even while movement is suppressed.
-            Vector2 stick = mv.rawMoveVector2d;
-            float mag = Mathf.Clamp01(stick.magnitude);
+            Vector3 want = _rawWorldMove(mv);
+            want.y = 0f;
+            float mag = Mathf.Clamp01(want.magnitude);
             if (mag < 0.3f) return;                       // no real input yet; keep listening inside the window
             _diDone = true;
-            if (stick.magnitude > 1f) stick /= stick.magnitude;
+            want /= Mathf.Max(want.magnitude, 1e-4f);
 
             Vector3 v     = rb.linearVelocity;
             float   speed = v.magnitude;
@@ -98,17 +116,15 @@ namespace SbgShields
             if (speed < 1f || hMag < 0.1f) return;        // straight up: nothing to steer
             Vector3 hDir  = h / hMag;
 
-            // D curves you to the right of your flight (clockwise seen from above), A to
-            // the left. W raises the arc, S flattens it.
-            float yaw     = stick.x * Plugin.DIMaxYaw.Value;
-            float elev    = Mathf.Atan2(v.y, hMag) * Mathf.Rad2Deg;
-            float newElev = Mathf.Clamp(elev + stick.y * Plugin.DIMaxPitch.Value, -89f, 89f);
+            // Turn the horizontal direction toward where the stick points on screen, by
+            // up to DIMaxYaw at full stick. Elevation and speed are left alone.
+            float toward = Vector3.SignedAngle(hDir, want, Vector3.up);
+            float yaw    = Mathf.Clamp(toward, -Plugin.DIMaxYaw.Value, Plugin.DIMaxYaw.Value) * mag;
 
             Vector3 newH = Quaternion.AngleAxis(yaw, Vector3.up) * hDir;
-            float   rad  = newElev * Mathf.Deg2Rad;
-            rb.linearVelocity = newH * (speed * Mathf.Cos(rad)) + Vector3.up * (speed * Mathf.Sin(rad));
+            rb.linearVelocity = newH * hMag + Vector3.up * v.y;
 
-            Plugin.Log.LogInfo($"DI: stick ({stick.x:0.00}, {stick.y:0.00}), curve {yaw:+0;-0}°, elevation {elev:0}° -> {newElev:0}°.");
+            Plugin.Log.LogInfo($"DI: stick {mag:0.00} pointing {toward:+0;-0}° off the launch, turned {yaw:+0;-0}°.");
         }
 
         private static void End(string how)

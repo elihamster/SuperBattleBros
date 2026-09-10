@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.18 (test build)
+
+- DI is camera-relative: push the stick toward where on the screen you want to drift and the launch turns that way, up to 20°. W is into the screen, S toward the camera. The separate up/down steer is gone.
+
 ## 0.7.17 (test build)
 
 - Hang time is on: a launch lingers at the top of its arc, nothing below 65% and full at 150%. The flight is the stun, and this is how it grows with percent. `Launch.LaunchHangTime`, `CloudHitMinPercent`, `HangFullPercent`.
