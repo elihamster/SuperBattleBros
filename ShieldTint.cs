@@ -122,10 +122,13 @@ namespace SbgShields
         }
 
         // ---- Bubble state, visible to everyone ----------------------------------
-        // A bubble looks like what it has left: full brightness at full pips, fading
-        // toward a faint shell as they go, and a white crack flash the instant one is
-        // lost. Ours reads ShieldState; everyone else's reads the pip fraction SbgNet
-        // carries, so the attacker sees the bubble weaken as they chip it.
+        // A bubble looks like what it has left: its skin colour at full pips, going
+        // pale toward white as they go -- worn, like frosted glass -- and a hard
+        // saturated flash the instant one is lost. Ours reads ShieldState; everyone
+        // else's reads the pip fraction SbgNet carries, so the attacker sees the
+        // bubble weaken as they chip it. It must never go DARKER: this is an additive
+        // effect, and a darkened one reads as a black stain, which is exactly what the
+        // first two attempts at this looked like.
 
         private static readonly Dictionary<PlayerInfo, float>  _lastFraction = new Dictionary<PlayerInfo, float>();
         private static readonly Dictionary<PlayerInfo, double> _crackUntil   = new Dictionary<PlayerInfo, double>();
@@ -149,11 +152,14 @@ namespace SbgShields
             if (_lastFraction.TryGetValue(p, out float last) && f < last - 0.001f) _crackUntil[p] = now + CrackFlash;
             _lastFraction[p] = f;
 
-            if (_crackUntil.TryGetValue(p, out double until) && now < until) return Color.Lerp(skin, Color.white, 0.85f);
+            if (_crackUntil.TryGetValue(p, out double until) && now < until) return Hot(skin);
 
-            float bright = Mathf.Lerp(Plugin.BubbleMinBrightness.Value, 1f, f);
-            return new Color(skin.r * bright, skin.g * bright, skin.b * bright, skin.a);
+            float worn = Mathf.Clamp01(Plugin.BubbleWornWhiteness.Value) * (1f - f);
+            return Color.Lerp(skin, Color.white, worn);
         }
+
+        /// <summary>The skin colour pushed over 1: the tint pipeline scales by intensity, so this reads as a bright pop, never as white-out.</summary>
+        internal static Color Hot(Color skin) => new Color(skin.r * 1.8f, skin.g * 1.8f, skin.b * 1.8f, skin.a);
 
         /// <summary>Re-tint any active bubble whose state changed since the last frame.</summary>
         private static void TickBubbleState()
@@ -255,9 +261,10 @@ namespace SbgShields
             if (col == null) return;
             bool bright = (Time.timeAsDouble * 5.0) % 1.0 < 0.5;   // 5 Hz
             if (_warnActive && bright == _warnDim) return;
+            if (!_warnActive) Plugin.Log.LogInfo($"Last circle ({ShieldState.Pips} pips): bubble blinking.");
             _warnActive = true; _warnDim = bright;
-            var c = BubbleColour(p);
-            Apply(col.transform, bright ? Color.Lerp(Skin.Of(p), Color.white, 0.7f) : c, "pip warning");
+            // Blink between the worn, pale state colour and a hot saturated pop of the skin.
+            Apply(col.transform, bright ? Hot(Skin.Of(p)) : BubbleColour(p), "pip warning");
         }
 
         /// <summary>

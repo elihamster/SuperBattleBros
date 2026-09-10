@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.19";
+        public const string Version = "0.7.20";
 
         internal static ManualLogSource Log;
 
@@ -177,7 +177,7 @@ namespace SbgShields
         internal static ConfigEntry<bool>  TintVanillaShield;
         internal static ConfigEntry<bool>  PipWarning;
         internal static ConfigEntry<bool>  BubbleReflects;
-        internal static ConfigEntry<float> BubbleMinBrightness;
+        internal static ConfigEntry<float> BubbleWornWhiteness;
 
         // Immunity look (the game's comeback shield)
         internal static ConfigEntry<bool>  ImmunityFlickerEnabled;
@@ -610,9 +610,10 @@ namespace SbgShields
                 "Recolor the game's own shield particle (hold, dissolve, hit sparks, break) to your skin color for the Shift shield. The magnet item stays team-colored.");
             PipWarning = Config.Bind("Bubble", "PipWarning", true,
                 "Blink the bubble when it is down to its last circle (two pips or fewer). Needs TintVanillaShield.");
-            BubbleMinBrightness = Config.Bind("Bubble", "BubbleMinBrightness", 0.45f,
-                "How bright the bubble is with almost nothing left, as a fraction of its full-pip colour. It fades from 1 toward " +
-                "this as pips go, on every screen, so an attacker can see it weaken. A white flash marks each pip lost.");
+            BubbleWornWhiteness = Config.Bind("Bubble", "BubbleWornWhiteness", 0.75f,
+                "How far toward white the bubble goes with almost nothing left (0 = always skin colour, 1 = pure white when empty). " +
+                "It pales as pips go, on every screen, so an attacker can see it weaken; it never darkens. A hard flash of the skin " +
+                "colour marks each pip lost.");
             BubbleReflects = Config.Bind("Bubble", "BubbleReflects", false,
                 "Off: a held bubble absorbs. Balls, rockets and bombs pass into you and cost pips; nothing bounces back. " +
                 "On: the game's own behaviour, where every shield is a wall that reflects whatever touches it. " +
@@ -917,6 +918,9 @@ namespace SbgShields
             try { if (Scoreboard.IsVisible) return "scoreboard"; } catch { }
             try { if (TextChatUi.IsOpen) return "text chat"; } catch { }
             try { if (RadialMenu.IsVisible) return "emote wheel"; } catch { }
+            try { if (PlayerCustomizationMenu.IsActive) return "customization shop"; } catch { }
+            try { if (VoteKickUi.IsShown) return "vote"; } catch { }
+            try { if (LoadingScreen.IsVisible) return "loading"; } catch { }
             return null;
         }
 

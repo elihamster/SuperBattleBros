@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.20 (test build)
+
+- The bubble pales toward white as pips go instead of darkening. Darkening an additive bubble looked like a black stain; that was the dimming, not a bug elsewhere. `Bubble.BubbleWornWhiteness` replaces `BubbleMinBrightness`. Pip loss and the last-circle blink flash the skin colour hot rather than white.
+- Orbital laser, thunderstorm and railgun direct hits kill through a bubble. The host was turning them into non-lethal shield hits.
+- No bubble icon while the customization shop, a vote or a loading screen is up.
+- Percent no longer accrues or shows in the lobby hub, where the mod could not read a match state and assumed one.
+- Every pip loss logs the new count and what the circles should show; the last-circle blink logs when it starts.
+
 ## 0.7.19 (test build)
 
 - A tapped bubble now plays its intro before dissolving. The body is drawn for 0.3 s after release, cosmetically only: it absorbs nothing, bounces nothing, and a hit in that moment is parried or lands in full. `Parry.ParryLinger`, 0 to turn it off.

@@ -32,9 +32,12 @@ namespace SbgShields
         private static void LosePips(int n)
         {
             if (n <= 0) return;
+            int before = Pips;
             Pips = Mathf.Max(0, Pips - n);
             LastPipLossAt  = Time.timeAsDouble;
             LastPipLossDot = Pips / 2;
+            // Always on: the one line that says what the circles should be showing.
+            Plugin.Log.LogInfo($"Bubble: {before} -> {Pips} pips (-{n}); circles {Pips / 2} full{(Pips % 2 == 1 ? " + a half" : "")}.");
         }
 
         internal static double UseCooldownUntil   = double.MinValue;
@@ -167,7 +170,9 @@ namespace SbgShields
                             return false;
                     }
                 }
-                catch { return true; }
+                // Cannot read the match state: there is no match. This used to return
+                // true, which made the lobby hub a "hole" where percent accrued and showed.
+                catch { return false; }
             }
         }
 

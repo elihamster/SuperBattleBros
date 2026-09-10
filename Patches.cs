@@ -819,6 +819,31 @@ namespace SbgShields
         }
     }
 
+    /// <summary>
+    /// The instant-kill items go straight through the bubble. The game builds a
+    /// "protective state" for every item hit from the victim's shield SyncVar, and on
+    /// the HOST turns it into an elimination reason: with the shield flag set, a laser
+    /// or lightning strike or railgun becomes a shield hit that depletes the shield
+    /// and knocks out, never eliminates. So a bubble was a free life against the
+    /// three hits that are supposed to be certain death. This strips the flag for
+    /// those three on the host, before the reason is chosen. The victim's own client
+    /// still sees a shield-variant knockout, which the cost table already treats as
+    /// unblockable (bubble drops, hit lands); the elimination the host sends is what
+    /// actually happens. Peripheral hits keep their normal cost.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerGolfer), "OnServerWasHitByItem")]
+    internal static class InstantKillIgnoresBubblePatch
+    {
+        private static void Prefix(ItemType itemType, ref ProtectiveState protectiveState)
+        {
+            if (!ModHandshake.GameplayEnabled) return;
+            if (itemType != ItemType.OrbitalLaser && itemType != ItemType.Thunderstorm && itemType != ItemType.Railgun) return;
+            if ((protectiveState & ProtectiveState.ElectromagnetShield) == 0) return;
+            protectiveState &= ~ProtectiveState.ElectromagnetShield;
+            Plugin.Log.LogInfo($"{itemType} hit a bubbled player: bubble ignored, elimination rules apply.");
+        }
+    }
+
     /// <summary>Halve percent on respawn. No pip restore.</summary>
     [HarmonyPatch(typeof(PlayerMovement), "LocalPlayerBeginRespawn")]
     internal static class RespawnPercentPatch
