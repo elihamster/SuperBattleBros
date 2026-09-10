@@ -317,8 +317,8 @@ namespace SbgShields
                 "OrbitalLaserPeripheralHit, RocketDriverSwing, RocketDriverSwingPostHitSpin, RocketDriverSwingProjectile, " +
                 "FreezeBomb, ReflectedFreezeBomb, ThunderstormPeripheralHit, ThunderstormDirectHit, OrbitalLaserDirectHit, " +
                 "RailgunDirectHit, TrafficVehicle, JumboBurgerGiantSwing, JumboBurgerGiantSwingProjectile, JumboBurgerGiantCollision, " +
-                "ElectromagnetShieldExplosion. Defaults: pistols/untargeted balls 1; targeted balls/backblast/peripheral 2; carts/vehicles/rocket driver/mines 3; " +
-                "swings/rockets/freeze/giant = full; laser/thunder/railgun direct = unblockable.");
+                "ElectromagnetShieldExplosion. Defaults: freeze bomb 0; pistols/untargeted balls 1; targeted balls/rockets/mines/backblast/peripheral 2; " +
+                "carts/vehicles/rocket driver 3; swings/giant = full; laser/thunder/railgun direct = unblockable.");
 
             // The three master switches. Each layer comes off cleanly on its own:
             //   Shield.ShieldAbsorbsHits  - pips. Off = vanilla shield: blocks everything, never breaks.

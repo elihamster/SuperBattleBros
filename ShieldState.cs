@@ -321,7 +321,16 @@ namespace SbgShields
                 case KnockoutType.RocketDriverSwingProjectile:
                     return projectileTargeted ? 2 : 1;
 
-                // 2 pips
+                // Free. A freeze bomb still freezes everyone else in range; the bubble's
+                // holder is spared, and that is the whole reward.
+                case KnockoutType.FreezeBomb:
+                case KnockoutType.ReflectedFreezeBomb:
+                    return 0;
+
+                // 2 pips. The explosion still happens, against everyone else nearby.
+                case KnockoutType.Rocket:
+                case KnockoutType.ReflectedRocket:
+                case KnockoutType.Landmine:
                 case KnockoutType.RocketBackBlast:
                 case KnockoutType.ThunderstormPeripheralHit:
                 case KnockoutType.OrbitalLaserPeripheralHit:
@@ -333,7 +342,6 @@ namespace SbgShields
                 case KnockoutType.TrafficVehicle:
                 case KnockoutType.RocketDriverSwing:
                 case KnockoutType.RocketDriverSwingPostHitSpin:
-                case KnockoutType.Landmine:
                     return 3;
 
                 // Unblockable: the shield drops and you eat the hit.
@@ -345,8 +353,8 @@ namespace SbgShields
                 case KnockoutType.RailgunElectromagnetShieldHit:
                     return CostUnblockable;
 
-                // Everything else -- Swing, Rocket, ReflectedRocket, Landmine,
-                // FreezeBomb, giant swings and collisions, and any type added later.
+                // Everything else -- Swing, giant swings and collisions, and any type
+                // added later.
                 default:
                     return CostFullBreak;
             }

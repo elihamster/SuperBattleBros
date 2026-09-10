@@ -2,6 +2,7 @@
 
 ## 0.7.14 (test build)
 
+- Costs against a held bubble: freeze bomb 0, rocket 2, landmine 2 (were full break, full break, 3). The explosion or the freeze still hits everyone else in range; the holder is spared.
 - Bullet launches scaled to 0.65 (was 0.85). The game's own knockback table, read from a settings dump, has guns as its strongest hits: elephant gun 60 m/s against a rocket's 40 and a swing's 30. At 0.85 a shotgun still out-launched a rocket; at 0.65 explosives lead, then bullets, then melee.
 
 ## 0.7.13 (test build)
