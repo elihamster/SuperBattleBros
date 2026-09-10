@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.14 (test build)
+
+- Bullet launches scaled to 0.65 (was 0.85). The game's own knockback table, read from a settings dump, has guns as its strongest hits: elephant gun 60 m/s against a rocket's 40 and a swing's 30. At 0.85 a shotgun still out-launched a rocket; at 0.65 explosives lead, then bullets, then melee.
+
 ## 0.7.13 (test build)
 
 - Network messages are sent only once every player in the lobby has announced this exact version. 0.7.12 could send during a newcomer's grace period, which would have disconnected a vanilla player joining a modded lobby.

@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.13";
+        public const string Version = "0.7.14";
 
         internal static ManualLogSource Log;
 
@@ -472,8 +472,10 @@ namespace SbgShields
             // the category and |v| in and out; tune from that.
             ExplosiveForceScale = Config.Bind("Launch", "ExplosiveForceScale", 1.0f,
                 "Multiplier on explosive launches (rockets, mines, back blast, bombs, laser/thunder peripheral). The biggest hits.");
-            BulletForceScale = Config.Bind("Launch", "BulletForceScale", 0.85f,
-                "Multiplier on bullet launches (pistol, elephant gun, deflected shots, railgun). Below explosives.");
+            BulletForceScale = Config.Bind("Launch", "BulletForceScale", 0.65f,
+                "Multiplier on bullet launches (pistol, elephant gun, deflected shots, railgun). The game's own gun knockback is the " +
+                "STRONGEST there is (elephant gun 60 m/s, rocket 40, swing 30), so this has to sit well under 1 for explosives to " +
+                "out-launch bullets. 0.65 puts the elephant gun just under a rocket and the pistol level with a swing.");
             MeleeForceScale = Config.Bind("Launch", "MeleeForceScale", 0.7f,
                 "Multiplier on everything else: swings, balls, carts, vehicles. The smallest hits.");
             ExplosiveAngleFloorScale = Config.Bind("Launch", "ExplosiveAngleFloorScale", 1.0f,
@@ -684,6 +686,8 @@ namespace SbgShields
             // BreakSoundCarry; the cooldown is now the punish and went 8 -> 10.
             "Shield.BreakCooldown",
             // 0.7.9: no defaults changed. Parry scan fix, bright pip blink, handshake nudge + diagnostics, HUD reason line.
+            // 0.7.14: the game's real knockback table (settings dump) showed guns are its strongest hits; bullets 0.85 -> 0.65.
+            "Launch.BulletForceScale",
         };
 
         private void ResetConfigIfVersionChanged()
