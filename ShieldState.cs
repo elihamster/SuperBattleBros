@@ -1234,8 +1234,19 @@ namespace SbgShields
             // than a huge one.
             if (!CurrentKnockoutIsBreak && !Plugin.PercentEnabled.Value) return;   // percent off = the game's own stun
             float stun = Mathf.Max(0f, CurrentKnockoutIsBreak ? Plugin.BreakLandingStun.Value : Plugin.LandingStun.Value);
+            // A floor on the whole thing, hit to get-up. "The flight is the stun" alone
+            // was silly at low percent: a one-second hop and you were up. So: the flight
+            // OR the floor, whichever is longer. A short launch lies there until
+            // MinStunAfterHit has passed since the hit; a long flight has already spent
+            // it and gets up on landing. A break has its own, longer floor -- losing the
+            // bubble is the moment that costs you. The tech skips whatever ground time
+            // is left, which is what gives it a purpose on the hits that need one.
+            float sinceHit = (float)(now - mv.IsKnockedOutTimestamp);
+            float floorTotal = CurrentKnockoutIsBreak ? Plugin.BreakMinStun.Value : Plugin.MinStunAfterHit.Value;
+            float floor = Mathf.Max(0f, floorTotal - sinceHit);
+            stun = Mathf.Max(stun, floor);
             if (HitstunPatch.ClampRecoveryTimer(mv, stun, out float before) && before > stun)
-                Plugin.Log.LogInfo($"Landed{(CurrentKnockoutIsBreak ? " from a break" : "")}: get-up in {stun:0.00}s (the game's timer had {before:0.00}s left).");
+                Plugin.Log.LogInfo($"Landed{(CurrentKnockoutIsBreak ? " from a break" : "")} {sinceHit:0.00}s after the hit: get-up in {stun:0.00}s (the game's timer had {before:0.00}s left).");
         }
 
         /// <summary>

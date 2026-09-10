@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.20";
+        public const string Version = "0.7.21";
 
         internal static ManualLogSource Log;
 
@@ -136,6 +136,8 @@ namespace SbgShields
         internal static ConfigEntry<float> PercentSpeedFactorMax;
         internal static ConfigEntry<float> LandingStun;
         internal static ConfigEntry<float> BreakLandingStun;
+        internal static ConfigEntry<float> MinStunAfterHit;
+        internal static ConfigEntry<float> BreakMinStun;
         internal static ConfigEntry<bool>  LaunchTrail;
         internal static ConfigEntry<float> LaunchTrailStartSpeed;
         internal static ConfigEntry<float> LaunchTrailMinPercent;
@@ -543,6 +545,14 @@ namespace SbgShields
                 "longer than a huge one. 0 = get up the moment you land. A tech skips it entirely.");
             BreakLandingStun = Config.Bind("Shield", "BreakLandingStun", 0.75f,
                 "Same, after the break bounce: a break keeps you down a little longer than a hit. Cannot be teched.");
+            MinStunAfterHit = Config.Bind("Launch", "MinStunAfterHit", 2f,
+                "Floor on the whole stun, hit to get-up, in seconds: the flight or this, whichever is longer. A short launch that " +
+                "lands in one second still keeps you down until this much has passed since the hit; a long flight has already " +
+                "spent it and gets up on landing. The game's own stun is a flat 3. A tech skips whatever ground time is left, which " +
+                "is what makes teching worth doing on the hits that need it.");
+            BreakMinStun = Config.Bind("Shield", "BreakMinStun", 3f,
+                "Same floor after a bubble break, hit to get-up. Longer than a hit on purpose: losing the bubble is the moment that " +
+                "costs you, and it cannot be teched.");
 
             StayDownUntilLanding = Config.Bind("Launch", "StayDownUntilLanding", true,
                 "When the knockout timer runs out while you are still in the air, the comeback bubble comes up on the spot but you " +

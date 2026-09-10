@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.21 (test build)
+
+- The stun is the flight or a floor, whichever is longer: you never get up sooner than 2 s after the hit that launched you (3 s after a bubble break). Short launches lie there; long flights still get up on landing; a tech skips whatever ground time is left. `Launch.MinStunAfterHit`, `Shield.BreakMinStun`.
+
 ## 0.7.20 (test build)
 
 - The bubble pales toward white as pips go instead of darkening. Darkening an additive bubble looked like a black stain; that was the dimming, not a bug elsewhere. `Bubble.BubbleWornWhiteness` replaces `BubbleMinBrightness`. Pip loss and the last-circle blink flash the skin colour hot rather than white.

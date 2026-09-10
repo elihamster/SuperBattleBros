@@ -1,6 +1,6 @@
 # SBG Shields — working agreements
 
-BepInEx 5 mod for Super Battle Golf. `SBG-Shields-Handoff-v5.md` holds the architecture,
+BepInEx 5 mod for Super Battle Golf. `SBG-Shields-Handoff-v6.md` holds the architecture,
 mechanics, config reference, open items and the decisions already made (§11). Read its §0,
 §10 and §11 first. These are the rules for working in this repo.
 
