@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.21";
+        public const string Version = "0.7.22";
 
         internal static ManualLogSource Log;
 
@@ -180,6 +180,7 @@ namespace SbgShields
         internal static ConfigEntry<bool>  PipWarning;
         internal static ConfigEntry<bool>  BubbleReflects;
         internal static ConfigEntry<float> BubbleWornWhiteness;
+        internal static ConfigEntry<float> BubbleWornAlpha;
 
         // Immunity look (the game's comeback shield)
         internal static ConfigEntry<bool>  ImmunityFlickerEnabled;
@@ -620,10 +621,13 @@ namespace SbgShields
                 "Recolor the game's own shield particle (hold, dissolve, hit sparks, break) to your skin color for the Shift shield. The magnet item stays team-colored.");
             PipWarning = Config.Bind("Bubble", "PipWarning", true,
                 "Blink the bubble when it is down to its last circle (two pips or fewer). Needs TintVanillaShield.");
-            BubbleWornWhiteness = Config.Bind("Bubble", "BubbleWornWhiteness", 0.75f,
-                "How far toward white the bubble goes with almost nothing left (0 = always skin colour, 1 = pure white when empty). " +
-                "It pales as pips go, on every screen, so an attacker can see it weaken; it never darkens. A hard flash of the skin " +
-                "colour marks each pip lost.");
+            BubbleWornWhiteness = Config.Bind("Bubble", "BubbleWornWhiteness", 0.3f,
+                "How much lighter the bubble gets with almost nothing left (0 = none, 1 = white). Kept small so every colour stays " +
+                "recognisable at one pip; the main tell is BubbleWornAlpha. It never darkens. A hot flash of the skin colour marks " +
+                "each pip lost.");
+            BubbleWornAlpha = Config.Bind("Bubble", "BubbleWornAlpha", 0.4f,
+                "How opaque the bubble is with almost nothing left, as a fraction of full (1 = no change). It thins as pips go, on " +
+                "every screen, so an attacker can see it weaken.");
             BubbleReflects = Config.Bind("Bubble", "BubbleReflects", false,
                 "Off: a held bubble absorbs. Balls, rockets and bombs pass into you and cost pips; nothing bounces back. " +
                 "On: the game's own behaviour, where every shield is a wall that reflects whatever touches it. " +
@@ -743,6 +747,8 @@ namespace SbgShields
             "Launch.LaunchHangTime", "Launch.CloudHitMinPercent",
             // 0.7.19: the linger is cosmetic now and back on, so a tap shows the bubble's intro.
             "Parry.ParryLinger",
+            // 0.7.22: worn bubbles thin instead of whitening; whiteness 0.75 -> 0.3.
+            "Bubble.BubbleWornWhiteness",
         };
 
         private void ResetConfigIfVersionChanged()

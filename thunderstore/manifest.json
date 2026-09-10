@@ -1,6 +1,6 @@
 {
   "name": "SuperBattleBros",
-  "version_number": "0.7.21",
+  "version_number": "0.7.22",
   "website_url": "https://github.com/elihamster/SuperBattleBros",
   "description": "Hold Shift to raise a bubble that absorbs hits, with a reach-based parry. Optional Smash-style percent, knockback, DI, teching and star KOs. Private lobbies only; everyone needs the mod. In testing.",
   "dependencies": [

@@ -1,6 +1,6 @@
 # Super Battle Golf — Shields Mod ("Super Battle Bros"), Handoff v6
 
-**Version:** 0.7.21 (test build). 14 `.cs` files, csproj, `package.ps1`, `thunderstore/`.
+**Version:** 0.7.22 (test build). 14 `.cs` files, csproj, `package.ps1`, `thunderstore/`.
 **Build:** plain `dotnet build` is the dev build (DevDebug, `SBG_DEV`, title "SBG Shields TEST"). `dotnet build -c Release` is the public build. `.\package.ps1` builds DevDebug (while testing) and zips `dist\SuperBattleBros-<ver>.zip` for Thunderstore. See §1 and §3.
 **Environment:** Windows, .NET SDK, BepInEx 5 via r2modman, ModConfig (AtomicStudio). Repo at github.com/elihamster/SuperBattleBros (public). Claude Code runs in the repo; every game-code claim comes from the decompiled assemblies in `decomp/` (gitignored) and the runtime settings dump `decomp/SbgSettingsDump.txt`.
 
@@ -13,7 +13,7 @@ Read §0, §10 and §11 first. §5 is the mechanics as they stand. §8 is what t
 The session (8–10 Sep 2026) shipped 0.7.8 through 0.7.21: thirteen versions in three days, the first multiplayer tests, the first custom network message. Most of what went wrong came from one habit: assuming a rule held on every machine when it held on one.
 
 1. **Design decided per machine.** Reflection (who simulates the ball), remote velocity (interpolated bodies report zero), which player's shield the tint knew about, whose percent anyone could see: each produced a "friend doesn't see X" bug. The two answers are (a) the message layer (§7) and (b) "every client applies the rule to every player" (the bubble collider). **Before shipping anything visible, ask: which machine decides this, and does every other machine agree?**
-2. **The same visual mistake twice.** Darkening the bubble to show "low pips" read as a black stain in 0.7.8 (pip blink dimmed to 25%) and again in 0.7.16 (brightness fell with pips). The bubble is an additive effect: it may go pale or hot, never darker. Now written into `ShieldTint` and §10.
+2. **The same visual mistake twice, then a third variant.** Darkening the bubble to show "low pips" read as a black stain in 0.7.8 (pip blink dimmed to 25%) and again in 0.7.16 (brightness fell with pips). 0.7.20 paled it toward white instead, and the user pointed out every colour then ends up the same. 0.7.22 makes a worn bubble THINNER (alpha, 40% at one pip) with only slight lightening. Rules, now in `ShieldTint` and §10: never darker, never all the way to white, the colour must stay recognisable at one pip. The user's screenshots of "the black tint" on 10 Sep were from 0.7.19, which still dimmed; check the load line before assuming a report is about the current build.
 3. **A network gate with a hole.** 0.7.12's message layer sent while the gameplay gate was open, and the gameplay gate grants a newcomer 12 s of grace. A vanilla joiner would have received a custom message and been disconnected. Found in the self-review, fixed in 0.7.13 with a strict send gate (`ModHandshake.AllPeersConfirmed`). **Review your own day's work against the game code before the user finds it.**
 4. **Reach in metres against a ball at 20 m/s.** The first reach-based parry could never arm on a ball: 1.5 m is 75 ms. The user's logs showed zero arms all session. Time-to-impact fixed it. **Sanity-check a tuning number against the game's real speeds (they are in the dump now).**
 5. **The cost table met a world it was not written for.** Once bubbles absorbed instead of reflecting, "targeted ball = full break" meant any homing ball popped a full bubble on contact, and the user reported it as a bug. When a rule changes, walk the table that depends on it.
@@ -152,7 +152,7 @@ Terminology (user's): **bubble** = the mod's Shift shield; **shield** = the game
 
 **Kill zone.** Knockout at ≥ 250%: +45 m/s up, knockout held to the apex, star flash + boom + shake on EVERY screen (SbgNet), hide 5 s, respawn.
 
-**Shared visuals.** Everyone's bubble tinted (skin colour, paling toward white as pips go, hot flash on loss, blink on the last circle); other players' percent drives their embers (from 100%) and trail gate; immunity flicker on every body; smoke trails for everyone.
+**Shared visuals.** Everyone's bubble tinted (skin colour, thinning to 40% opacity and lightening slightly as pips go, hot flash on loss, blink on the last circle); other players' percent drives their embers (from 100%) and trail gate; immunity flicker on every body; smoke trails for everyone.
 
 **HUD.** Percent (hidden outside a hole / percent off), bubble icon (hidden with a logged reason), five circles + half, loss flash, cooldown timer, stand-down panel.
 
@@ -178,7 +178,7 @@ Dev build only: `Settings dump: wrote <object>` lines and the dump file.
 
 ## 8. Open items (priority order)
 
-1. **Verify in play (both machines on 0.7.21):** half circles after an odd cost (`Bubble:` line vs HUD); last-circle blink (`Last circle` line vs screen); pale bubble legibility; laser/thunder/railgun kill through a bubble (host log line + elimination); friend's icon (zero-alpha fix) — the `HUD: bubble icon hidden (...)` line settles it; parry read at 0.35 s; hang time reads as weight not braking; `MinStunAfterHit` feel (user: "I get up rather quickly" at 0.25; 1.5 is a first guess; 3 = vanilla).
+1. **Verify in play (both machines on 0.7.22):** half circles after an odd cost (`Bubble:` line vs HUD); last-circle blink (`Last circle` line vs screen); worn-bubble legibility (does alpha actually thin the bubble's shader? if not, `BubbleWornAlpha` does nothing and the next tell is intensity, never darkness); "sometimes white during the intro" = the last-circle blink's hot phase or the parry flash, check the log; laser/thunder/railgun kill through a bubble (host log line + elimination); friend's icon (zero-alpha fix) — the `HUD: bubble icon hidden (...)` line settles it; parry read at 0.35 s; hang time reads as weight not braking; `MinStunAfterHit` feel (user: "I get up rather quickly" at 0.25; 1.5 is a first guess; 3 = vanilla).
 2. **Config sync (host authority).** Design agreed since v5, unbuilt: after `AllPeersConfirmed`, host broadcasts SHARED entries (costs, parry timings, knockback, percent on/off, `BubbleReflects`, hang, DI, tech) as an override layer read at point of use; personal entries (tint, HUD, verbose) never travel. Foundation for perks/tiers, events, rubber-banding.
 3. **Aimed-at parry**: keep, tune or delete after the friend tests it (yaw-only corridor).
 4. **Cost table review**: cart cost by impact speed (the game passes it); elephant gun 5 vs pistol 3 by feel; whether the parry should keep beating full breaks now that only swings are full breaks.
@@ -199,7 +199,7 @@ Dev build only: `Settings dump: wrote <object>` lines and the dump file.
 `[Percent]` ★PercentEnabled true (master), MaxPercent 300, ★RageVisual true, ★RageVisualMinPercent 100, PercentForMaxScaling 100, ★ForceMultiplierAtMax 2.3, KnockbackExponent 1.5, HitstunMultiplierAtMax 0.8, PercentPerHitBase 5, PercentPerPip ★2, PercentPerFullBreakHit 25, PercentPerUnblockableHit 30, PercentGainOnFullBreak 0, ★PercentScalesWithSpeed true, ★PercentReferenceSpeed 30, ★PercentSpeedFactorMin 0.5, ★PercentSpeedFactorMax 2, ExplosionPercentFalloff true (inactive while speed scaling), ExplosionFalloffRadius 8, ExplosionPercentAtEdge 0.3, PercentReductionBetweenHoles 1, PercentLostOnRespawn 25, RespawnFatigueWindow 45, KillZoneEnabled true (master: death), KillPercent 250, PercentAfterKillZoneDeath 25, KillZoneFlash true, KillZoneFlashSize 9, KillZoneUpwardBoost 45, KillZoneMaxRiseTime 2.5, KillZoneDeathLinger 5, KillZoneBoom true.
 `[Launch]` ShapeLaunches true, MinLaunchAngleAtZero 8, MinLaunchAngleAtMax 28, ★HorizontalMultiplierAtMax 1.25, MaxHorizontalLaunchSpeed 34, ExplosionForceAtEdge 0.25, ExplosionRadialLaunch true, ExplosionRadialWeight 0.8, LaunchDrag 0.8, LaunchVerticalDragFactor 0.5, LaunchDragDuration 1.5, LaunchDragAboveSpeed 14, LaunchHangTime ★0.35, LaunchHangWindow 7, LaunchHangDuration 3, CloudHitMinPercent ★65, ★HangFullPercent 150, ★ExplosiveForceScale 1, ★BulletForceScale 0.65, ★MeleeForceScale 0.7, ★ExplosiveAngleFloorScale 1, ★BulletAngleFloorScale 0, ★MeleeAngleFloorScale 0.5, ★BulletMaxElevation 15, ★DirectionalInfluence true, ★DIWindow 0.15, ★DIMaxYaw 20, ★TechEnabled true, ★TechWindow 0.2, ★TechImmunity 0.2, ★TechLockout 0.4, ★TechRecovery 0.3, ★TechSelfInflicted false, ★RecoveryImmunity 1, ★LandingStun 0.25, ★MinStunAfterHit 2, ★StayDownUntilLanding true, ★StayDownMaxTime 3, ★TumbleGravityUntilLanding true, LaunchTrail true, LaunchTrailStartSpeed 12, LaunchTrailMinPercent 75, LaunchTrailStopSpeed 5, LaunchTrailRate 45, LaunchTrailRatePerMetre 5, LaunchTrailSize 2.2, LaunchTrailLifetime 1.7, LaunchTrailAlpha 1.
 `[Rooting]` RootWhileShielded, BlockJumpWhileShielded, BlockSwingWhileShielded, BlockDiveWhileShielded, AllowMidAirActivation, BlockActivationDuringSwing, BlockActivationDuringSpringBoots, BlockActivationInMenus, BlockItemUseWhileShielded, BlockAimWhileShielded, BreakStunIgnoresComebackImmunity, BlockActivationDuringImmunity — all true.
-`[Bubble]` TintVanillaShield true, ★PipWarning true, ★BubbleReflects false (must match lobby), ★BubbleWornWhiteness 0.75.
+`[Bubble]` TintVanillaShield true, ★PipWarning true, ★BubbleReflects false (must match lobby), ★BubbleWornWhiteness 0.3, ★BubbleWornAlpha 0.4.
 `[Immunity]` ★Flicker true, ★FlickerRate 10, ★FlickerWash 0.75, ★HideGameBubble false.
 `[Pose]` PlayShieldEmote false, ShieldEmote "HandsUp". `[HUD]` unchanged from v5. `[Network]` RequireAllPlayersModded true, HandshakeTimeout 12, MismatchPopupDuration 12. `[Debug]` VerboseLogging false; dev: DebugKeys, SetPercent, ChatCommands, GiveItem. `[Meta]` ConfigVersion.
 
@@ -224,7 +224,7 @@ Dev build only: `Settings dump: wrote <object>` lines and the dump file.
 - **[inferred]** Bump `Version` on every behaviour change; list retuned defaults; commit at every version; `git diff` before committing; exact-match edits for code.
 - **[inferred]** Diagnostics for a reported bug default on and cheap; one line per event, never per frame.
 - **[inferred]** Before shipping anything visible, ask which machine decides it and whether every other machine agrees.
-- **[inferred]** The bubble may go pale or hot, never darker.
+- **[inferred]** A worn bubble goes thinner and a little lighter, or hot on a flash; never darker, never fully white, never the same for every colour.
 - **[inferred]** Nothing is sent over the wire unless `AllPeersConfirmed`.
 - **[inferred]** One agent owns a change end to end; parallelise only across files that do not touch.
 

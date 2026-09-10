@@ -122,13 +122,13 @@ namespace SbgShields
         }
 
         // ---- Bubble state, visible to everyone ----------------------------------
-        // A bubble looks like what it has left: its skin colour at full pips, going
-        // pale toward white as they go -- worn, like frosted glass -- and a hard
-        // saturated flash the instant one is lost. Ours reads ShieldState; everyone
-        // else's reads the pip fraction SbgNet carries, so the attacker sees the
-        // bubble weaken as they chip it. It must never go DARKER: this is an additive
-        // effect, and a darkened one reads as a black stain, which is exactly what the
-        // first two attempts at this looked like.
+        // A bubble looks like what it has left: its skin colour at full pips, getting
+        // THINNER (alpha) and only slightly lighter as they go, and a hot saturated
+        // flash the instant one is lost. Ours reads ShieldState; everyone else's reads
+        // the pip fraction SbgNet carries, so the attacker sees the bubble weaken as
+        // they chip it. Three rules learned the hard way: never darker (reads as a
+        // black stain, 0.7.8 and 0.7.16), never all the way to white (every colour
+        // ends up the same, 0.7.20), and the colour must stay recognisable at one pip.
 
         private static readonly Dictionary<PlayerInfo, float>  _lastFraction = new Dictionary<PlayerInfo, float>();
         private static readonly Dictionary<PlayerInfo, double> _crackUntil   = new Dictionary<PlayerInfo, double>();
@@ -154,12 +154,14 @@ namespace SbgShields
 
             if (_crackUntil.TryGetValue(p, out double until) && now < until) return Hot(skin);
 
-            float worn = Mathf.Clamp01(Plugin.BubbleWornWhiteness.Value) * (1f - f);
-            return Color.Lerp(skin, Color.white, worn);
+            float worn = 1f - f;
+            var c = Color.Lerp(skin, Color.white, Mathf.Clamp01(Plugin.BubbleWornWhiteness.Value) * worn);
+            c.a = Mathf.Lerp(1f, Mathf.Clamp01(Plugin.BubbleWornAlpha.Value), worn);   // thinner, not darker
+            return c;
         }
 
-        /// <summary>The skin colour pushed over 1: the tint pipeline scales by intensity, so this reads as a bright pop, never as white-out.</summary>
-        internal static Color Hot(Color skin) => new Color(skin.r * 1.8f, skin.g * 1.8f, skin.b * 1.8f, skin.a);
+        /// <summary>The skin colour pushed over 1: the tint pipeline scales by intensity, so this reads as a bright pop of the same colour, not white.</summary>
+        internal static Color Hot(Color skin) => new Color(skin.r * 1.4f, skin.g * 1.4f, skin.b * 1.4f, 1f);
 
         /// <summary>Re-tint any active bubble whose state changed since the last frame.</summary>
         private static void TickBubbleState()
@@ -207,7 +209,7 @@ namespace SbgShields
 
             var c = Skin.Of(p);
             float b = Mathf.Max(1f, Plugin.ParryGlowBoost.Value);
-            var hot = new Color(c.r * b, c.g * b, c.b * b, c.a);
+            var hot = new Color(c.r * b, c.g * b, c.b * b, 1f);
 
             _flashOn = p;
             _flashUntil = Time.timeAsDouble + Mathf.Max(0.05f, Plugin.ParryGlowDuration.Value);
@@ -380,7 +382,9 @@ namespace SbgShields
         {
             float i = k.maxColorComponent;
             if (i <= 0.0001f) return k; // black stays black (usually a fade-to-dark key)
-            return new Color(c.r * i, c.g * i, c.b * i, k.a);
+            // The tint's own alpha scales the authored alpha: this is how a worn bubble
+            // gets THINNER rather than darker or whiter. Fades and pulses keep their shape.
+            return new Color(c.r * i, c.g * i, c.b * i, k.a * c.a);
         }
 
         private static Gradient Hue(Gradient g, Color c)
@@ -592,7 +596,7 @@ namespace SbgShields
                 string prop = sh.GetPropertyName(i);
                 var oc = m.GetColor(prop);
                 float intensity = Mathf.Max(oc.maxColorComponent, 1f);
-                m.SetColor(prop, new Color(c.r * intensity, c.g * intensity, c.b * intensity, oc.a));
+                m.SetColor(prop, new Color(c.r * intensity, c.g * intensity, c.b * intensity, oc.a * c.a));
             }
         }
 

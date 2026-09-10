@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.22 (test build)
+
+- A worn bubble gets thinner, not darker and not white: it keeps its colour, fades toward 40% opacity at one pip, and lightens only a little. The hot flash on a lost pip is gentler. `Bubble.BubbleWornAlpha`, `BubbleWornWhiteness`.
+
 ## 0.7.21 (test build)
 
 - The stun is the flight or a floor, whichever is longer: you never get up sooner than 2 s after the hit that launched you (3 s after a bubble break). Short launches lie there; long flights still get up on landing; a tech skips whatever ground time is left. `Launch.MinStunAfterHit`, `Shield.BreakMinStun`.
