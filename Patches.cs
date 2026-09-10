@@ -630,8 +630,12 @@ namespace SbgShields
 
         private static void Postfix(PlayerInfo __instance, bool isExplosion)
         {
+            // With the bubble a trigger nothing ever reflects; the only shield-hit
+            // effects are the ones the absorb plays itself, and charging for those
+            // would bill every absorbed hit twice.
+            if (!Plugin.BubbleReflects.Value) return;
             if (isExplosion || !Local.Is(__instance) || !__instance.IsElectromagnetShieldActive) return;
-            if (Time.timeAsDouble - ShieldState.LastKnockoutChargeTime < 0.2) return; // already charged by TryKnockOut
+            if (Time.timeAsDouble - ShieldState.LastKnockoutChargeTime < 0.5) return; // already charged by TryKnockOut (the RPC echo can lag a ping)
 
             var col = __instance.ElectromagnetShieldCollider;
             if (col == null) return;
@@ -748,6 +752,34 @@ namespace SbgShields
                         if (p != null && p.ElectromagnetShieldCollider != null) p.ElectromagnetShieldCollider.isTrigger = false;
             }
             catch { }
+        }
+    }
+
+    /// <summary>
+    /// Whatever wakes you in mid-air -- the stay-down cap, the game's own time-out,
+    /// a direct recovery -- the fall stays a tumble's fall. The game swaps
+    /// KnockOutGravityFactor for 1 the moment you are no longer knocked out; this
+    /// keeps the knockout factor until the launch that put you up there has landed.
+    /// The original slow-float complaint fixed at its root, so the stay-down hold is
+    /// no longer the only thing standing between you and a slow descent.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerMovement), "UpdatePhysicsParameters")]
+    internal static class TumbleGravityPatch
+    {
+        private static AccessTools.FieldRef<PlayerMovement, float> _gravityFactor;
+
+        private static bool Prepare()
+        {
+            try { _gravityFactor = AccessTools.FieldRefAccess<PlayerMovement, float>("gravityFactor"); return true; }
+            catch (Exception e) { Plugin.Log.LogWarning("gravityFactor not found; a mid-air wake-up falls at walking gravity. " + e.Message); return false; }
+        }
+
+        private static void Postfix(PlayerMovement __instance)
+        {
+            if (!Plugin.TumbleGravityUntilLanding.Value || !Launch.Active) return;
+            if (!Local.Is(__instance.PlayerInfo)) return;
+            if (__instance.IsKnockedOutOrRecovering || __instance.IsGrounded) return;
+            try { _gravityFactor(__instance) = GameManager.PlayerMovementSettings.KnockOutGravityFactor; } catch { }
         }
     }
 

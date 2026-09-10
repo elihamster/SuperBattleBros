@@ -60,6 +60,34 @@ namespace SbgShields
 
         /// <summary>False when someone in the lobby is unmodded or on a different version.</summary>
         internal static bool GameplayEnabled => _gateOpen;
+
+        /// <summary>
+        /// The strict gate, for anything that SENDS. GameplayEnabled gives a newcomer
+        /// HandshakeTimeout seconds of grace before the mod stands down, which is right
+        /// for gameplay and wrong for the wire: a custom message reaching a peer who
+        /// turns out to be vanilla disconnects them. So sending requires every remote
+        /// player to have announced this exact version, no grace at all.
+        /// </summary>
+        internal static bool AllPeersConfirmed
+        {
+            get
+            {
+                if (!_gateOpen) return false;
+                try
+                {
+                    var r = GameManager.RemotePlayers;
+                    if (r == null) return true;
+                    foreach (var p in r)
+                    {
+                        ulong g = GuidOf(p);
+                        if (g == 0UL) return false;
+                        if (!_peers.TryGetValue(g, out var peer) || !peer.Announced || peer.Version != Plugin.Version) return false;
+                    }
+                    return true;
+                }
+                catch { return false; }
+            }
+        }
         internal static string BlockReason => _blockReason;
 
         /// <summary>When the gate last closed, so the HUD knows how long to shout.</summary>

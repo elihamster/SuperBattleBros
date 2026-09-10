@@ -12,9 +12,10 @@ namespace SbgShields
     /// nothing else. This carries the rest.
     ///
     /// Rules that keep it safe:
-    ///  - Nothing is ever SENT unless the handshake gate is open, i.e. every peer has
-    ///    announced this exact version. Mirror disconnects a peer that receives a
-    ///    message id it has no handler for; a vanilla peer must never get one.
+    ///  - Nothing is ever SENT unless every remote player has announced this exact
+    ///    version (ModHandshake.AllPeersConfirmed, stricter than the gameplay gate,
+    ///    which grants a newcomer a grace period). Mirror disconnects a peer that
+    ///    receives a message id it has no handler for; a vanilla peer must never get one.
     ///  - Handlers are registered on this client and, when hosting, on the server as
     ///    soon as Mirror is up, so a message cannot arrive before its handler.
     ///  - The server accepts a message only from the connection that owns the player
@@ -80,7 +81,7 @@ namespace SbgShields
 
                 // Percent: on change, at most ten times a second, plus a refresh every two
                 // seconds so a late joiner and a reconnect catch up without a request.
-                if (ModHandshake.GameplayEnabled && NetworkClient.isConnected)
+                if (ModHandshake.AllPeersConfirmed && NetworkClient.isConnected)
                 {
                     double now = Time.timeAsDouble;
                     float pct = Plugin.PercentEnabled.Value && ShieldState.InPlayableHole ? ShieldState.Percent : 0f;
@@ -97,7 +98,7 @@ namespace SbgShields
         /// <summary>Send a message about the local player. False if it could not go out.</summary>
         internal static bool Send(Kind kind, float a)
         {
-            if (!ModHandshake.GameplayEnabled) return false;   // never into a lobby that might hold a vanilla peer
+            if (!ModHandshake.AllPeersConfirmed) return false;   // never into a lobby that might hold a vanilla peer
             try
             {
                 if (!NetworkClient.isConnected) return false;

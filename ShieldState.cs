@@ -123,6 +123,7 @@ namespace SbgShields
             HasPendingVelocityCorrection = true;
             PendingHitstunMultiplier     = Mathf.Max(0.05f, Plugin.BreakStunMultiplier.Value);
             PendingIsBreak               = true;
+            Launch.Begin();   // the bounce is a launch too: tumble gravity until it lands
         }
 
         // ---- Where the economy is live ---------------------------------------
@@ -413,7 +414,7 @@ namespace SbgShields
         private static double _parryArmedUntil = double.MinValue;
         private static bool   _parryProjectile, _parrySwing;
         private static string _parryThreat = "";
-        private static readonly Collider[] _threatBuffer = new Collider[48];
+        private static readonly Collider[] _threatBuffer = new Collider[128];   // the search now reaches 15 m; a busy hole has more than 48 colliders in that
         private static readonly System.Collections.Generic.HashSet<UnityEngine.Object> _threatSeen = new System.Collections.Generic.HashSet<UnityEngine.Object>();
         private static readonly System.Text.StringBuilder _threatText = new System.Text.StringBuilder();
         private static readonly System.Text.StringBuilder _rejectText = new System.Text.StringBuilder();

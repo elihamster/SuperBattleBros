@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.13 (test build)
+
+- Network messages are sent only once every player in the lobby has announced this exact version. 0.7.12 could send during a newcomer's grace period, which would have disconnected a vanilla player joining a modded lobby.
+- Absorbed hits are no longer charged a second time when the bubble's own spark effect echoes back over a slow connection.
+- A mid-air wake-up of any kind now keeps knockout gravity until the launch lands (`Launch.TumbleGravityUntilLanding`). The original slow-float bug fixed at its root.
+- Parry search buffer enlarged for busy holes.
+
 ## 0.7.12 (test build)
 
 - The mod now has its own network message, sent only once everyone has passed the handshake. Percent is shared, so other players' rage embers and trails run off their real number; a star KO plays on every screen; the player you parried hears it.

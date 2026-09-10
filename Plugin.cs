@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.12";
+        public const string Version = "0.7.13";
 
         internal static ManualLogSource Log;
 
@@ -107,6 +107,7 @@ namespace SbgShields
         internal static ConfigEntry<float> CloudHitMinPercent;
         internal static ConfigEntry<bool>  StayDownUntilLanding;
         internal static ConfigEntry<float> StayDownMaxTime;
+        internal static ConfigEntry<bool>  TumbleGravityUntilLanding;
         // Hit categories
         internal static ConfigEntry<float> ExplosiveForceScale;
         internal static ConfigEntry<float> BulletForceScale;
@@ -514,6 +515,9 @@ namespace SbgShields
             StayDownMaxTime = Config.Bind("Launch", "StayDownMaxTime", 3f,
                 "Longest the stay-down hold lasts after the stun timer ended, in seconds. A body that has not touched ground by then " +
                 "is stuck on something; wake it rather than wait for the game's 10 s time-out.");
+            TumbleGravityUntilLanding = Config.Bind("Launch", "TumbleGravityUntilLanding", true,
+                "If anything wakes you in mid-air (the hold's cap, the game's time-out), keep falling at knockout gravity until the " +
+                "launch lands instead of drifting down at walking gravity.");
             LaunchTrail = Config.Bind("Launch", "LaunchTrail", true,
                 "Skin-colored smoke trail on any player flying fast while knocked out.");
             LaunchTrailStartSpeed = Config.Bind("Launch", "LaunchTrailStartSpeed", 12f,

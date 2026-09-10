@@ -71,12 +71,12 @@ namespace SbgShields
                 else TryDirectionalInfluence(mv, rb);
             }
 
-            // Over when you are back on the ground, or when the stun ran out in the air
-            // and you have control again. (IsGrounded is the walking check and stays
+            // Over when you are back on the ground. Waking in the air does NOT end it:
+            // the launch is still carrying you, and TumbleGravityPatch reads this to
+            // keep the fall a tumble's fall. (IsGrounded is the walking check and stays
             // false while tumbling; the knockout state machine has its own ground test.)
             bool down = mv.IsGrounded || mv.KnockoutState == KnockoutState.OnGround;
             if (down && now - _startedAt > 0.2) End("landed");
-            else if (!mv.IsKnockedOutOrRecovering && now - _startedAt > 0.2) End("recovered");
         }
 
         private static void TryDirectionalInfluence(PlayerMovement mv, Rigidbody rb)
