@@ -156,6 +156,17 @@ namespace SbgShields
             }
         }
 
+        /// <summary>Shorten the game's recovery timer, never lengthen it. False if the field is unavailable.</summary>
+        internal static bool ClampRecoveryTimer(PlayerMovement mv, float seconds, out float before)
+        {
+            before = -1f;
+            if (_timeUntilRecovery == null || mv == null) return false;
+            ref float t = ref _timeUntilRecovery(mv);
+            before = t;
+            if (t > seconds) t = seconds;
+            return true;
+        }
+
         private static void Prefix(PlayerMovement __instance, out bool __state)
         {
             // Was the player already knocked out before this call? The game only

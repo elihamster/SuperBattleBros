@@ -1120,13 +1120,24 @@ namespace SbgShields
         /// <summary>Called from the SetKnockOutState postfix on the InAir -> OnGround transition of the local player.</summary>
         internal static void OnTumbleLanded(PlayerMovement mv)
         {
-            if (!Plugin.TechEnabled.Value || !ModHandshake.GameplayEnabled) return;
+            if (!ModHandshake.GameplayEnabled) return;
             double now = Time.timeAsDouble;
             _landedAt = now;
-            if (now - _shieldPressAt > Mathf.Max(0.02f, Plugin.TechWindow.Value)) return;
-            if (CurrentKnockoutIsBreak) return;    // the break bounce is the one stun you sit through
-            if (KillZone.IsArmed) return;          // dead men do not tech
-            _techPending = true;
+            if (KillZone.IsArmed) return;          // dead: the star is coming, nothing to get up for
+
+            bool tech = Plugin.TechEnabled.Value
+                        && !CurrentKnockoutIsBreak   // the break bounce is the one stun you sit through
+                        && now - _shieldPressAt <= Mathf.Max(0.02f, Plugin.TechWindow.Value);
+            if (tech) { _techPending = true; return; }
+
+            // No tech: the flight WAS the stun. Start the get-up shortly after touchdown
+            // instead of lying there for whatever is left of the game's own timer (3 s
+            // by its constants), which is why a short launch felt like a longer stun
+            // than a huge one.
+            if (!CurrentKnockoutIsBreak && !Plugin.PercentEnabled.Value) return;   // percent off = the game's own stun
+            float stun = Mathf.Max(0f, CurrentKnockoutIsBreak ? Plugin.BreakLandingStun.Value : Plugin.LandingStun.Value);
+            if (HitstunPatch.ClampRecoveryTimer(mv, stun, out float before) && before > stun)
+                Plugin.Log.LogInfo($"Landed{(CurrentKnockoutIsBreak ? " from a break" : "")}: get-up in {stun:0.00}s (the game's timer had {before:0.00}s left).");
         }
 
         /// <summary>

@@ -65,17 +65,54 @@ namespace SbgShields
         private static readonly List<ParticleSystemRenderer> _sweep = new List<ParticleSystemRenderer>();
         private static bool   _restored = true;   // materials currently handed back to the game
         private static double _lastSweep;
+        private static double _lastAnyActive = double.MinValue;
+
+        /// <summary>Any player's shield up right now. The pooled materials go back to the game only once none is.</summary>
+        private static bool AnyShieldActive()
+        {
+            try
+            {
+                var local = GameManager.LocalPlayerInfo;
+                if (local != null && local.IsElectromagnetShieldActive) return true;
+                var remote = GameManager.RemotePlayers;
+                if (remote != null)
+                    foreach (var p in remote)
+                        if (p != null && p.IsElectromagnetShieldActive) return true;
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>The player whose shield this VFX hangs under, or null.</summary>
+        internal static PlayerInfo OwnerOf(Transform t)
+        {
+            if (t == null) return null;
+            try
+            {
+                var direct = t.GetComponentInParent<PlayerInfo>();
+                if (direct != null) return direct;
+                var local = GameManager.LocalPlayerInfo;
+                if (local != null && local.ElectromagnetShieldCollider != null && t.IsChildOf(local.ElectromagnetShieldCollider.transform)) return local;
+                var remote = GameManager.RemotePlayers;
+                if (remote != null)
+                    foreach (var p in remote)
+                        if (p != null && p.ElectromagnetShieldCollider != null && t.IsChildOf(p.ElectromagnetShieldCollider.transform)) return p;
+            }
+            catch { }
+            return null;
+        }
 
         // ---- Arming ------------------------------------------------------------
 
         internal static bool Enabled => Plugin.TintVanillaShield.Value;
 
-        /// <summary>True while the effect being set up belongs to our Shift shield.</summary>
-        internal static bool IsOurs(PlayerInfo p)
-        {
-            if (!Local.Is(p)) return false;
-            return Plugin.WeActivated || Time.timeAsDouble - Plugin.LastOurShieldReleaseTime < 0.5;
-        }
+        /// <summary>
+        /// Whose bubbles get tinted: everyone's. Every player in a lobby that passed the
+        /// handshake runs this mod, and from another machine a Shift bubble and a magnet
+        /// item's shield are the same SyncVar, so the item is tinted too. Until 0.7.11
+        /// only the local Shift bubble was, which is why a friend's bubble stayed blue.
+        /// </summary>
+        internal static bool IsOurs(PlayerInfo p) => p != null;
 
         internal static void Arm(PlayerInfo p)
         {
@@ -308,9 +345,10 @@ namespace SbgShields
             if (_instances.Count == 0) return;
 
             double now = Time.timeAsDouble;
-            bool ourShieldIdle = !Plugin.WeActivated && now - Plugin.LastOurShieldReleaseTime >= 3.0;
+            if (AnyShieldActive()) _lastAnyActive = now;
+            bool allIdle = now - _lastAnyActive >= 3.0;
 
-            if (!_restored && ourShieldIdle)
+            if (!_restored && allIdle)
             {
                 foreach (var kv in _instances)
                 {
@@ -395,11 +433,7 @@ namespace SbgShields
                 Plugin.Log.LogInfo($"Shield hook fired {(Time.timeAsDouble - Plugin.LastActivationTime) * 1000.0:0} ms after activation (active={__instance.IsElectromagnetShieldActive}).");
         }
 
-        private static void Postfix(PlayerInfo __instance)
-        {
-            if (Local.Is(__instance)) ShieldTint.OnShieldHookDone(__instance);
-            else ShieldTint.Disarm();
-        }
+        private static void Postfix(PlayerInfo __instance) => ShieldTint.OnShieldHookDone(__instance);
     }
 
     /// <summary>Arm around the hit/break effects so sparks and the break burst match the shield.</summary>
@@ -429,6 +463,8 @@ namespace SbgShields
         {
             public Material Normal, Stencil;
             public Color Color;
+            public PlayerInfo Owner;
+            public double LastActive;
         }
 
         private static readonly Dictionary<BubbleVfxMaterialHandler, Tinted> _reg = new Dictionary<BubbleVfxMaterialHandler, Tinted>();
@@ -461,6 +497,8 @@ namespace SbgShields
                 t = new Tinted();
                 _reg[h] = t;
             }
+            if (t.Owner == null) t.Owner = ShieldTint.OwnerOf(h.transform);
+            t.LastActive = Time.timeAsDouble;
             var n = _normal(h); var st = _stencil(h);
             if (t.Normal == null  && n  != null) t.Normal  = new Material(n);
             if (t.Stencil == null && st != null) t.Stencil = new Material(st);
@@ -489,21 +527,14 @@ namespace SbgShields
             }
         }
 
-        // Resolved once per frame instead of once per handler per frame.
-        private static Transform _ourShieldRoot;
-        private static int _ourShieldFrame = -1;
-
-        private static bool StillOurs(BubbleVfxMaterialHandler h)
+        /// <summary>Keep the tint while the owner's shield is up, and for a moment after so the dissolve stays coloured.</summary>
+        private static bool StillOurs(Tinted t)
         {
-            if (!Plugin.WeActivated && Time.timeAsDouble - Plugin.LastOurShieldReleaseTime >= 3.0) return false;
-            if (_ourShieldFrame != Time.frameCount)
-            {
-                _ourShieldFrame = Time.frameCount;
-                var local = GameManager.LocalPlayerInfo;
-                var col = local != null ? local.ElectromagnetShieldCollider : null;
-                _ourShieldRoot = col != null ? col.transform : null;
-            }
-            return _ourShieldRoot != null && h.transform.IsChildOf(_ourShieldRoot);
+            if (t.Owner == null) return false;
+            bool active = false;
+            try { active = t.Owner.IsElectromagnetShieldActive; } catch { }
+            if (active) t.LastActive = Time.timeAsDouble;
+            return active || Time.timeAsDouble - t.LastActive < 3.0;
         }
 
         private static void Swap(ParticleSystemRenderer r, Tinted t)
@@ -540,7 +571,7 @@ namespace SbgShields
             try
             {
                 if (!_reg.TryGetValue(__instance, out var t)) return true;
-                if (!StillOurs(__instance)) { Release(__instance, t); return true; }
+                if (!StillOurs(t)) { Release(__instance, t); return true; }
                 var r = _renderer(__instance);
                 if (r == null) return false;
                 Swap(r, t);
@@ -593,7 +624,6 @@ namespace SbgShields
                 if (kv.Value.Stencil != null) UnityEngine.Object.Destroy(kv.Value.Stencil);
             }
             _reg.Clear();
-            _ourShieldRoot = null;
         }
     }
 }

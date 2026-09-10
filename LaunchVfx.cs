@@ -100,7 +100,10 @@ namespace SbgShields
                 {
                     var mv = p.Movement;
                     tumbling = mv != null && mv.IsKnockedOutOrRecovering && !mv.IsGrounded;
-                    speed = mv != null ? mv.Velocity.magnitude : 0f;
+                    // A remote player's rigidbody is driven by interpolation and reports no
+                    // velocity of its own; the game syncs one separately. Reading the local
+                    // one for everyone is why nobody else's trail ever appeared.
+                    speed = mv == null ? 0f : (ReferenceEquals(p, local) ? mv.Velocity : mv.SyncedVelocity).magnitude;
                 }
                 catch { }
 
@@ -330,9 +333,14 @@ namespace SbgShields
                 var shape = _ragePs.shape;
                 shape.enabled = true; shape.shapeType = ParticleSystemShapeType.Sphere; shape.radius = 0.45f;
 
+                // Unity insists all three axes share a curve mode, or it logs
+                // "Particle Velocity curves must all be in the same mode" every frame
+                // from every worker thread. Two-constants on all three.
                 var vel = _ragePs.velocityOverLifetime;
                 vel.enabled = true; vel.space = ParticleSystemSimulationSpace.World;
+                vel.x = new ParticleSystem.MinMaxCurve(-0.2f, 0.2f);
                 vel.y = new ParticleSystem.MinMaxCurve(0.8f, 1.8f);
+                vel.z = new ParticleSystem.MinMaxCurve(-0.2f, 0.2f);
 
                 var sol = _ragePs.sizeOverLifetime; sol.enabled = true;
                 sol.size = new ParticleSystem.MinMaxCurve(1f, new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(1f, 0f)));

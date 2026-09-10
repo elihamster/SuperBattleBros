@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.11 (test build)
+
+- Everyone's bubble is tinted to their skin colour, not just your own. The magnet item's shield too, since from another machine they are the same thing.
+- Other players' smoke trails show. The mod was reading a velocity remote players never report.
+- Landing ends the stun: the get-up starts 0.25 s after touchdown (0.75 s after a break bounce) instead of after the game's 3 s timer. `Launch.LandingStun`, `Shield.BreakLandingStun`.
+- Fixed the "Particle Velocity curves must all be in the same mode" error spam from the rage embers.
+
 ## 0.7.10 (test build)
 
 - A held bubble absorbs instead of reflecting. Balls, rockets and bombs pass into you and cost pips; nothing bounces back. `Bubble.BubbleReflects` restores the game's wall, and must match for everyone in the lobby.

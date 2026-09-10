@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.10";
+        public const string Version = "0.7.11";
 
         internal static ManualLogSource Log;
 
@@ -123,6 +123,8 @@ namespace SbgShields
         internal static ConfigEntry<bool>  TechEnabled;
         internal static ConfigEntry<float> TechWindow;
         internal static ConfigEntry<float> TechImmunity;
+        internal static ConfigEntry<float> LandingStun;
+        internal static ConfigEntry<float> BreakLandingStun;
         internal static ConfigEntry<bool>  LaunchTrail;
         internal static ConfigEntry<float> LaunchTrailStartSpeed;
         internal static ConfigEntry<float> LaunchTrailMinPercent;
@@ -496,6 +498,12 @@ namespace SbgShields
             TechWindow = Config.Bind("Launch", "TechWindow", 0.2f, "Seconds before landing in which the press counts.");
             TechImmunity = Config.Bind("Launch", "TechImmunity", 0.2f,
                 "Seconds of comeback bubble after a tech. 0 = none at all; you are up and fully hittable.");
+            LandingStun = Config.Bind("Launch", "LandingStun", 0.25f,
+                "The flight is the stun. When your tumbling body lands, the get-up starts this many seconds later instead of after " +
+                "whatever is left of the game's own 3 s knockout timer, which is why a short launch used to leave you lying there " +
+                "longer than a huge one. 0 = get up the moment you land. A tech skips it entirely.");
+            BreakLandingStun = Config.Bind("Shield", "BreakLandingStun", 0.75f,
+                "Same, after the break bounce: a break keeps you down a little longer than a hit. Cannot be teched.");
 
             StayDownUntilLanding = Config.Bind("Launch", "StayDownUntilLanding", true,
                 "When the knockout timer runs out while you are still in the air, the comeback bubble comes up on the spot but you " +
