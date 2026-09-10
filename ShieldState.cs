@@ -312,11 +312,13 @@ namespace SbgShields
                 case KnockoutType.ReturnedBall:
                     return 1;
 
-                // Balls: targeted = full break, untargeted = chip.
+                // Balls: a homing ball is a bigger hit than a stray one, but it is still a
+                // ball. It used to be a full break, which meant any locked-on ball popped
+                // a full bubble on contact; that read as the bubble not being there.
                 case KnockoutType.SwingProjectile:
                 case KnockoutType.ReflectedSwingProjectile:
                 case KnockoutType.RocketDriverSwingProjectile:
-                    return projectileTargeted ? CostFullBreak : 1;
+                    return projectileTargeted ? 2 : 1;
 
                 // 2 pips
                 case KnockoutType.RocketBackBlast:
@@ -449,11 +451,13 @@ namespace SbgShields
 
                 if (!_loggedShieldRadius) { _loggedShieldRadius = true; Plugin.Log.LogInfo($"Shield radius is {shieldRadius:0.00} m; parry reach is {Plugin.ParryReach.Value:0.00} m past its edge."); }
 
-                float reach = shieldRadius + Mathf.Max(0f, Plugin.ParryReach.Value);
+                float reach  = shieldRadius + Mathf.Max(0f, Plugin.ParryReach.Value);              // the catch radius
+                float search = shieldRadius + Mathf.Max(Plugin.ParryReach.Value, Plugin.ParryReadRange.Value);   // how far we look for something incoming
+                float maxTti = 0f;
                 int mask = ReflectionChargePatch.Mask();
                 try { var l = GameManager.LayerSettings; mask |= l.PlayersMask | l.GolfCartsMask; } catch { }
 
-                int n = Physics.OverlapSphereNonAlloc(centre, reach, _threatBuffer, mask, QueryTriggerInteraction.Collide);
+                int n = Physics.OverlapSphereNonAlloc(centre, search, _threatBuffer, mask, QueryTriggerInteraction.Collide);
                 _threatSeen.Clear();
                 _threatText.Clear();
                 _rejectText.Clear();
@@ -471,6 +475,7 @@ namespace SbgShields
                     {
                         if (ReferenceEquals(other, player) || !_threatSeen.Add(other)) continue;
                         string name; try { name = other.PlayerId.PlayerNameNoRichText; } catch { name = "a player"; }
+                        if (dist > Plugin.ParryReach.Value + 1f) { Reject($"{name} {dist:0.0}m away"); continue; }   // a club has to be able to reach
                         var g = other.AsGolfer;
                         if (g == null || !(g.IsChargingSwing || g.IsSwinging)) { Reject($"{name} not swinging"); continue; }
                         _parrySwing = true;
@@ -486,10 +491,29 @@ namespace SbgShields
                     var rb = c.attachedRigidbody;
                     if (rb == null) { Reject($"{c.name} static"); continue; }
                     if (!_threatSeen.Add(rb)) continue;
-                    float speed = rb.linearVelocity.magnitude;
-                    if (speed < ThreatMinSpeed) { Reject($"{rb.name.Replace("(Clone)", "")} {speed:0.0}m/s"); continue; }
+                    string  rbName = rb.name.Replace("(Clone)", "");
+                    Vector3 vel    = rb.linearVelocity;
+                    float   speed  = vel.magnitude;
+                    if (speed < ThreatMinSpeed) { Reject($"{rbName} {speed:0.0}m/s"); continue; }
+
+                    // Two ways in. CLOSE, whatever it is doing: the catch. Or INCOMING fast
+                    // enough to arrive within ParryReadTime: the read. Distance alone was
+                    // useless against a homing ball -- at 20 m/s, 1.5 m is 75 ms.
+                    Vector3 toMe    = centre - rb.worldCenterOfMass;
+                    float   gap     = Mathf.Max(0.01f, toMe.magnitude);
+                    float   closing = Vector3.Dot(vel, toMe / gap);
+                    float   tti     = closing > 0.5f ? Mathf.Max(0f, gap - shieldRadius) / closing : float.PositiveInfinity;
+                    bool close    = dist <= Plugin.ParryReach.Value;
+                    bool incoming = tti <= Plugin.ParryReadTime.Value;
+                    if (!close && !incoming)
+                    {
+                        Reject($"{rbName} {dist:0.0}m, {(float.IsInfinity(tti) ? "not closing" : $"{tti:0.00}s out")}");
+                        continue;
+                    }
                     _parryProjectile = true;
-                    _threatText.Append(_threatText.Length > 0 ? ", " : "").Append(rb.name.Replace("(Clone)", "")).Append($" {dist:0.0}m at {speed:0}m/s");
+                    if (incoming) maxTti = Mathf.Max(maxTti, tti);
+                    _threatText.Append(_threatText.Length > 0 ? ", " : "").Append(rbName).Append($" {dist:0.0}m at {speed:0}m/s")
+                               .Append(incoming ? $", {tti:0.00}s out" : "");
                 }
 
                 // Hitscan read (experimental, see AimedAt.cs): a bead on you counts as a projectile in reach.
@@ -501,9 +525,12 @@ namespace SbgShields
 
                 if (_parrySwing || _parryProjectile)
                 {
+                    // Live at least ParryArmTime, and in any case long enough for the
+                    // farthest incoming thing to actually get here.
+                    float armFor = Mathf.Max(Mathf.Max(0.05f, Plugin.ParryArmTime.Value), maxTti + 0.15f);
                     _parryThreat = _threatText.ToString();
-                    _parryArmedUntil = Time.timeAsDouble + Mathf.Max(0.05f, Plugin.ParryArmTime.Value);
-                    Plugin.Log.LogInfo($"Parry armed for {Plugin.ParryArmTime.Value:0.00}s: {_parryThreat}.");
+                    _parryArmedUntil = Time.timeAsDouble + armFor;
+                    Plugin.Log.LogInfo($"Parry armed for {armFor:0.00}s: {_parryThreat}.");
                 }
                 else
                     // Always on while the parry is being tuned: one line per release, naming what was
@@ -703,6 +730,7 @@ namespace SbgShields
                         PendingVelocityCorrection    = -incomingVelocityChange;
                         HasPendingVelocityCorrection = true;
                     }
+                    PlayAbsorbSparks(player);
                     if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Shield absorbed {type}: -{cost} pips, {Pips} left.");
                     return false;
                 }
@@ -1021,6 +1049,25 @@ namespace SbgShields
                 Plugin.Log.LogWarning("Break bounce request failed: " + e.Message);
             }
             finally { RequestingBreakBounce = false; }
+        }
+
+        /// <summary>
+        /// With the bubble no longer a physical wall (Bubble.BubbleReflects off) nothing
+        /// collides with it, so the game never plays its own hit sparks. Play them at the
+        /// point on the bubble facing where the hit came from, for everyone.
+        /// </summary>
+        private static void PlayAbsorbSparks(PlayerInfo player)
+        {
+            if (Plugin.BubbleReflects.Value) return;   // the collision already did it
+            try
+            {
+                float r = 1f;
+                var col = player.ElectromagnetShieldCollider;
+                if (col != null) r = col.radius;
+                Vector3 local = PendingHitLocalOrigin.sqrMagnitude > 0.01f ? PendingHitLocalOrigin.normalized * r : Vector3.up * r;
+                player.PlayElectromagnetShieldHitForAllClients(local, isExplosion: false);
+            }
+            catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Absorb sparks: " + e.Message); }
         }
 
         internal static void Break(PlayerInfo player, bool playBreakEffect)

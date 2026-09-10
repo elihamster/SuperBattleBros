@@ -694,6 +694,48 @@ namespace SbgShields
         }
     }
 
+    /// <summary>
+    /// A held bubble absorbs; it does not bounce things back. Vanilla makes the shield
+    /// a physical wall: balls, rockets and bombs collide with it and reflect, and gun
+    /// rays stop on it. Which machine decides that is whichever one simulates the
+    /// projectile, so the only CONSISTENT way to change it is for every client to make
+    /// every shield a trigger. Projectiles then pass into the body, the hit arrives as
+    /// an ordinary knockout on the victim, and ResolveKnockout absorbs it for pips.
+    /// Gun rays ignore triggers and land the same way. This applies to the magnet
+    /// item's shield too: from another machine the two cannot be told apart. The
+    /// setting has to match across the lobby, which is what config sync is for.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerInfo), "OnIsElectromagnetShieldActiveChanged")]
+    internal static class BubbleColliderPatch
+    {
+        private static void Postfix(PlayerInfo __instance)
+        {
+            try
+            {
+                var col = __instance.ElectromagnetShieldCollider;
+                if (col == null) return;
+                bool trigger = __instance.IsElectromagnetShieldActive && !Plugin.BubbleReflects.Value;
+                if (col.isTrigger != trigger) col.isTrigger = trigger;
+            }
+            catch { }
+        }
+
+        /// <summary>Plugin unload: hand every shield back to the game as a wall.</summary>
+        internal static void RestoreAll()
+        {
+            try
+            {
+                var local = GameManager.LocalPlayerInfo;
+                if (local != null && local.ElectromagnetShieldCollider != null) local.ElectromagnetShieldCollider.isTrigger = false;
+                var remote = GameManager.RemotePlayers;
+                if (remote != null)
+                    foreach (var p in remote)
+                        if (p != null && p.ElectromagnetShieldCollider != null) p.ElectromagnetShieldCollider.isTrigger = false;
+            }
+            catch { }
+        }
+    }
+
     /// <summary>Halve percent on respawn. No pip restore.</summary>
     [HarmonyPatch(typeof(PlayerMovement), "LocalPlayerBeginRespawn")]
     internal static class RespawnPercentPatch

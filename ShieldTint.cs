@@ -18,7 +18,15 @@ namespace SbgShields
                 {
                     int i = cos.NetworkskinColorIndex;
                     if (i >= 0 && i < settings.skinColors.Length)
-                        return settings.skinColors[i].baseColor;
+                    {
+                        // The game forces alpha to 1 before it uses this colour
+                        // (PlayerCosmeticsSwitcher.ApplyCurrentSkinColorToMaterial); the
+                        // stored value can carry any alpha. Drawn raw, a skin with alpha 0
+                        // gave an invisible HUD icon and invisible pips.
+                        var c = settings.skinColors[i].baseColor;
+                        c.a = 1f;
+                        return c;
+                    }
                 }
             }
             catch { }

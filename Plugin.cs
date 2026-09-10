@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.9";
+        public const string Version = "0.7.10";
 
         internal static ManualLogSource Log;
 
@@ -49,6 +49,8 @@ namespace SbgShields
         // Parry
         internal static ConfigEntry<bool>  PerfectParry;
         internal static ConfigEntry<float> ParryReach;
+        internal static ConfigEntry<float> ParryReadTime;
+        internal static ConfigEntry<float> ParryReadRange;
         internal static ConfigEntry<float> ParryArmTime;
         internal static ConfigEntry<bool>  AimedAtParry;   // experimental, see AimedAt.cs
         internal static ConfigEntry<float> AimedAtRange;
@@ -161,6 +163,7 @@ namespace SbgShields
         // Bubble visual
         internal static ConfigEntry<bool>  TintVanillaShield;
         internal static ConfigEntry<bool>  PipWarning;
+        internal static ConfigEntry<bool>  BubbleReflects;
 
         // Immunity look (the game's comeback shield)
         internal static ConfigEntry<bool>  ImmunityFlickerEnabled;
@@ -310,8 +313,8 @@ namespace SbgShields
                 "OrbitalLaserPeripheralHit, RocketDriverSwing, RocketDriverSwingPostHitSpin, RocketDriverSwingProjectile, " +
                 "FreezeBomb, ReflectedFreezeBomb, ThunderstormPeripheralHit, ThunderstormDirectHit, OrbitalLaserDirectHit, " +
                 "RailgunDirectHit, TrafficVehicle, JumboBurgerGiantSwing, JumboBurgerGiantSwingProjectile, JumboBurgerGiantCollision, " +
-                "ElectromagnetShieldExplosion. Defaults: pistols/untargeted balls 1; backblast/peripheral 2; carts/vehicles/rocket driver/mines 3; " +
-                "swings/targeted balls/rockets/freeze/giant = full; laser/thunder/railgun direct = unblockable.");
+                "ElectromagnetShieldExplosion. Defaults: pistols/untargeted balls 1; targeted balls/backblast/peripheral 2; carts/vehicles/rocket driver/mines 3; " +
+                "swings/rockets/freeze/giant = full; laser/thunder/railgun direct = unblockable.");
 
             // The three master switches. Each layer comes off cleanly on its own:
             //   Shield.ShieldAbsorbsHits  - pips. Off = vanilla shield: blocks everything, never breaks.
@@ -329,9 +332,15 @@ namespace SbgShields
                 "Letting go of the shield with a threat in reach is a perfect parry: that hit is fully absorbed, no pips spent, no " +
                 "percent gained. Holding the shield out and getting hit is an ordinary block; letting go into the hit is the read.");
             ParryReach = Config.Bind("Parry", "ParryReach", 1.5f,
-                "Metres past the edge of your bubble that count as 'in reach' when you let go. Anything moving in there (ball, rocket, " +
-                "bomb, cart, whatever the game treats as a moving object) or a golfer winding up or swinging in there arms a parry. " +
-                "Nothing in reach = nothing armed, so you cannot fish for a parry by tapping the shield. This is the difficulty knob.");
+                "Metres past the edge of your bubble that count as 'in reach' when you let go, whatever the thing is doing: a rocket " +
+                "drifting past, a golfer winding up. The catch. For things coming AT you see ParryReadTime; a fast ball is never " +
+                "'in reach' for long enough to time by distance.");
+            ParryReadTime = Config.Bind("Parry", "ParryReadTime", 0.35f,
+                "A projectile that would reach your bubble within this many seconds counts as in reach when you let go, however far " +
+                "away it still is. The read: see it coming, let go, take it for free. This is the difficulty knob for projectiles. " +
+                "Nothing coming = nothing armed, so tapping the bubble cannot fish for a parry.");
+            ParryReadRange = Config.Bind("Parry", "ParryReadRange", 15f,
+                "Metres out to which incoming projectiles are looked for. Just a search radius; ParryReadTime decides.");
             ParryArmTime = Config.Bind("Parry", "ParryArmTime", 0.5f,
                 "Seconds an armed parry stays live, so what was in reach has time to actually arrive. Not a timing window you aim for: " +
                 "with nothing in reach at release it never opens at all.");
@@ -548,6 +557,11 @@ namespace SbgShields
                 "Recolor the game's own shield particle (hold, dissolve, hit sparks, break) to your skin color for the Shift shield. The magnet item stays team-colored.");
             PipWarning = Config.Bind("Bubble", "PipWarning", true,
                 "Blink the bubble when it is down to its last pip: one more chip breaks it. Needs TintVanillaShield.");
+            BubbleReflects = Config.Bind("Bubble", "BubbleReflects", false,
+                "Off: a held bubble absorbs. Balls, rockets and bombs pass into you and cost pips; nothing bounces back. " +
+                "On: the game's own behaviour, where every shield is a wall that reflects whatever touches it. " +
+                "MUST BE THE SAME FOR EVERYONE IN THE LOBBY: which machine simulates a projectile decides what it hits, so a mixed " +
+                "lobby gets mixed results. Applies to the magnet item's shield as well; from another machine the two are the same thing.");
 
             ImmunityFlickerEnabled = Config.Bind("Immunity", "Flicker", true,
                 "Smash-style invulnerability: a player's body flickers washed-out white while the game's comeback shield is up. " +
@@ -687,6 +701,7 @@ namespace SbgShields
             try { LaunchVfx.DestroyAll(); }  catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { KillZone.DestroyAll(); }   catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { ImmunityFlicker.ClearAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
+            try { BubbleColliderPatch.RestoreAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { Hud.Shutdown(); }          catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { CourseManager.MatchStateChanged -= OnMatchStateChanged; } catch { }
             _harmony?.UnpatchSelf();
