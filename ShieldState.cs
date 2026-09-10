@@ -580,6 +580,7 @@ namespace SbgShields
             }
 
             Plugin.Log.LogInfo($"PERFECT PARRY on {what} ({(Time.timeAsDouble - LoweredAt) * 1000.0:0} ms after release; armed by {_parryThreat}; would have cost {CostLabel(cost)}). {Pips} pips kept.");
+            SbgNet.Send(SbgNet.Kind.Parry, 0f);   // so the attacker hears it too
         }
 
         private static string CostLabel(int cost) =>
@@ -742,6 +743,8 @@ namespace SbgShields
             try { alreadyDown = player.Movement != null && player.Movement.IsKnockedOut; } catch { }
             if (alreadyDown)
             {
+                _pendingWhileDown = true;
+                _pendingIncoming  = incomingVelocityChange;
                 PendingPercentGain        = GetPercentGain(cost, type);
                 if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Hit {type} while down: vanilla knockback, +{PendingPercentGain:0}% pending.");
                 _awaitingResult = true;
@@ -950,12 +953,27 @@ namespace SbgShields
                 HasPendingVelocityCorrection = false;
                 PendingVelocityCorrection    = Vector3.zero;
                 LaunchDragUntil = double.MinValue;
+
+                // Refused while already down: the comeback shield stopped the knockout, but
+                // the game still shoves the body. Immune-and-tumbling used to mean being
+                // juggled around the sky, never landing, until the 10 s time-out forced a
+                // wake-up under the gold shield. A refused hit on a downed body moves nothing.
+                if (_pendingWhileDown)
+                {
+                    PendingVelocityCorrection    = -_pendingIncoming;
+                    HasPendingVelocityCorrection = _pendingIncoming.sqrMagnitude > 1e-6f;
+                    if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo("Hit refused while down: shove cancelled.");
+                }
                 BreakTrace.Log("game REFUSED the knockout: no stun will happen");
                 if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo("Knockout refused by the game (immunity/team/self/frozen); launch shaping discarded, no stun.");
             }
             _awaitingResult = false;
             ForcingBreakKnockout = false;
+            _pendingWhileDown = false;
         }
+
+        private static bool    _pendingWhileDown;
+        private static Vector3 _pendingIncoming;
 
         /// <summary>Testing hook: jump straight to a percent, shake and all.</summary>
         internal static void SetPercent(float value)
@@ -1183,6 +1201,7 @@ namespace SbgShields
 
         private static void ClearPendingHitOnly()
         {
+            _pendingWhileDown = false;
             HasPendingVelocityCorrection = false;
             PendingVelocityCorrection = Vector3.zero;
             PendingIsBreak           = false;

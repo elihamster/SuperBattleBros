@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.11";
+        public const string Version = "0.7.12";
 
         internal static ManualLogSource Log;
 
@@ -106,6 +106,7 @@ namespace SbgShields
         internal static ConfigEntry<float> LaunchHangDuration;
         internal static ConfigEntry<float> CloudHitMinPercent;
         internal static ConfigEntry<bool>  StayDownUntilLanding;
+        internal static ConfigEntry<float> StayDownMaxTime;
         // Hit categories
         internal static ConfigEntry<float> ExplosiveForceScale;
         internal static ConfigEntry<float> BulletForceScale;
@@ -510,6 +511,9 @@ namespace SbgShields
                 "keep tumbling and falling at knockout speed until you hit the ground, then get up as normal. " +
                 "Off = vanilla: the game wakes you in mid-air the instant the timer ends, and from then on you fall at walking-state " +
                 "gravity, which reads as floating down.");
+            StayDownMaxTime = Config.Bind("Launch", "StayDownMaxTime", 3f,
+                "Longest the stay-down hold lasts after the stun timer ended, in seconds. A body that has not touched ground by then " +
+                "is stuck on something; wake it rather than wait for the game's 10 s time-out.");
             LaunchTrail = Config.Bind("Launch", "LaunchTrail", true,
                 "Skin-colored smoke trail on any player flying fast while knocked out.");
             LaunchTrailStartSpeed = Config.Bind("Launch", "LaunchTrailStartSpeed", 12f,
@@ -710,6 +714,7 @@ namespace SbgShields
             try { KillZone.DestroyAll(); }   catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { ImmunityFlicker.ClearAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { BubbleColliderPatch.RestoreAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
+            try { SbgNet.Shutdown(); }           catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { Hud.Shutdown(); }          catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { CourseManager.MatchStateChanged -= OnMatchStateChanged; } catch { }
             _harmony?.UnpatchSelf();
@@ -737,6 +742,7 @@ namespace SbgShields
             LaunchVfx.Tick();
             KillZone.Tick();
             ImmunityFlicker.Tick();
+            SbgNet.Tick();
 
             var keyboard = Keyboard.current;
             if (keyboard == null) return;

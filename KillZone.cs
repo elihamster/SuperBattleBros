@@ -97,18 +97,8 @@ namespace SbgShields
 
             if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"STAR KO at {ShieldState.Percent:0}% (height {pos.y:0.0}).");
 
-            if (Plugin.KillZoneFlash.Value)
-            {
-                try { PlayFlash(pos, Skin.Of(p)); }
-                catch (Exception e) { Plugin.Log.LogWarning("Kill flash failed: " + e.Message); }
-            }
-            if (Plugin.KillZoneBoom.Value)
-            {
-                try { RuntimeManager.PlayOneShot(GameManager.AudioSettings.ElectromagnetShieldExplosionEvent, pos); }
-                catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Kill boom failed: " + e.Message); }
-                try { CameraModuleController.Shake(GameManager.CameraGameplaySettings.RocketExplosionScreenshakeSettings, pos, 1.6f, 1.4f); }
-                catch { try { CameraModuleController.Shake(GameManager.CameraGameplaySettings.ElectromagnetExplosionScreenshakeSettings, pos); } catch { } }
-            }
+            PlayStar(p, pos);
+            SbgNet.Send(SbgNet.Kind.StarKo, 0f);   // everyone else draws it too
 
             ShieldState.Percent = Mathf.Max(0f, Plugin.PercentAfterKillZoneDeath.Value);
 
@@ -122,6 +112,31 @@ namespace SbgShields
                 return;
             }
             BeginRespawn(mv);
+        }
+
+        /// <summary>The flash, boom and shake, for any player at any position. Local star and remote star share it.</summary>
+        private static void PlayStar(PlayerInfo p, Vector3 pos)
+        {
+            if (Plugin.KillZoneFlash.Value)
+            {
+                try { PlayFlash(pos, Skin.Of(p)); }
+                catch (Exception e) { Plugin.Log.LogWarning("Kill flash failed: " + e.Message); }
+            }
+            if (Plugin.KillZoneBoom.Value)
+            {
+                try { RuntimeManager.PlayOneShot(GameManager.AudioSettings.ElectromagnetShieldExplosionEvent, pos); }
+                catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Kill boom failed: " + e.Message); }
+                try { CameraModuleController.Shake(GameManager.CameraGameplaySettings.RocketExplosionScreenshakeSettings, pos, 1.6f, 1.4f); }
+                catch { try { CameraModuleController.Shake(GameManager.CameraGameplaySettings.ElectromagnetExplosionScreenshakeSettings, pos); } catch { } }
+            }
+        }
+
+        /// <summary>Another player's star KO, told to us over SbgNet. Their body vanishes on its own (isVisible is a SyncVar).</summary>
+        internal static void PlayRemoteStar(PlayerInfo p)
+        {
+            if (p == null) return;
+            Vector3 pos = p.ChestBone != null ? p.ChestBone.position : p.transform.position + Vector3.up;
+            PlayStar(p, pos);
         }
 
         /// <summary>

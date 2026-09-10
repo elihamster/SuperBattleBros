@@ -107,12 +107,13 @@ namespace SbgShields
                 }
                 catch { }
 
-                // Percent gate: only our own percent is known, so remote players keep
-                // the speed-only rule until pips/percent are synced.
-                bool percentOk = !ReferenceEquals(p, local) ||
-                                 !Plugin.PercentEnabled.Value ||
-                                 ShieldState.Percent >= Plugin.LaunchTrailMinPercent.Value ||
-                                 KillZone.IsArmed;
+                // Percent gate. Ours we know; theirs we know once SbgNet has told us,
+                // and until then the speed rule alone decides.
+                float theirPct;
+                bool percentOk = !Plugin.PercentEnabled.Value ||
+                                 (ReferenceEquals(p, local)
+                                     ? ShieldState.Percent >= Plugin.LaunchTrailMinPercent.Value || KillZone.IsArmed
+                                     : !SbgNet.TryGetPercent(p, out theirPct) || theirPct >= Plugin.LaunchTrailMinPercent.Value);
 
                 _trails.TryGetValue(p, out var t);
 
@@ -266,59 +267,84 @@ namespace SbgShields
         // Smash's rage is the attacker hitting harder at high percent; here the
         // victim's own percent already does that job. What was missing was the LOOK:
         // a player at 150% should read as one. Embers rise off the chest from
-        // RageVisualMinPercent, thicker and redder toward the kill line. Local only,
-        // because only this client knows this percent.
+        // RageVisualMinPercent, thicker and redder toward the kill line. One emitter
+        // per player; other players' percent arrives over SbgNet.
 
-        private static GameObject _rageGo;
-        private static ParticleSystem _ragePs;
+        private class Rage
+        {
+            public GameObject Go;
+            public ParticleSystem Ps;
+            public bool On;
+        }
+
+        private static readonly Dictionary<PlayerInfo, Rage> _rages = new Dictionary<PlayerInfo, Rage>();
+        private static readonly List<PlayerInfo> _rageDead = new List<PlayerInfo>();
         private static Material _rageMat;
         private static Texture2D _emberTex;
-        private static bool _rageOn;
 
         private static void RageTick()
         {
-            var p = GameManager.LocalPlayerInfo;
-            bool want = p != null && Plugin.RageVisual.Value && Plugin.PercentEnabled.Value && ShieldState.InPlayableHole &&
-                        ShieldState.Percent >= Plugin.RageVisualMinPercent.Value && !KillZone.IsLingering;
-            try { if (want && p.Movement != null && (p.Movement.IsRespawningOrDrowning || !p.Movement.IsVisible)) want = false; } catch { }
+            _scratch.Clear();
+            var local = GameManager.LocalPlayerInfo;
+            if (local != null) _scratch.Add(local);
+            try { var r = GameManager.RemotePlayers; if (r != null) _scratch.AddRange(r); } catch { }
 
-            if (!want)
-            {
-                if (_rageOn)
-                {
-                    _rageOn = false;
-                    try { if (_ragePs != null) _ragePs.Stop(true, ParticleSystemStopBehavior.StopEmitting); } catch { }
-                }
-                return;
-            }
+            _rageDead.Clear();
+            foreach (var kv in _rages)
+                if (kv.Key == null || !_scratch.Contains(kv.Key)) _rageDead.Add(kv.Key);
+            foreach (var k in _rageDead) { DestroyRage(_rages[k]); _rages.Remove(k); }
 
-            if (_rageGo == null && !CreateRage()) return;
-
+            bool layerOn = Plugin.RageVisual.Value && Plugin.PercentEnabled.Value;
             float min = Plugin.RageVisualMinPercent.Value;
-            float t = Mathf.InverseLerp(min, Mathf.Max(min + 1f, Plugin.KillPercent.Value), ShieldState.Percent);
 
-            var em = _ragePs.emission;
-            em.rateOverTime = Mathf.Lerp(10f, 45f, t);
-            var main = _ragePs.main;
-            Color hot  = Color.Lerp(new Color(1f, 0.62f, 0.18f), new Color(1f, 0.15f, 0.06f), t);
-            Color core = new Color(1f, 0.88f, 0.4f);
-            main.startColor = new ParticleSystem.MinMaxGradient(hot, core);
+            foreach (var p in _scratch)
+            {
+                if (p == null) continue;
+                bool isLocal = ReferenceEquals(p, local);
+                float pct;
+                if (isLocal) pct = ShieldState.InPlayableHole ? ShieldState.Percent : 0f;
+                else if (!SbgNet.TryGetPercent(p, out pct)) pct = 0f;
 
-            var anchor = p.ChestBone != null ? p.ChestBone : p.transform;
-            _rageGo.transform.position = anchor.position;
-            if (!_rageOn) { _rageOn = true; _ragePs.Play(true); }
+                bool want = layerOn && pct >= min && !(isLocal && KillZone.IsLingering);
+                try { if (want && p.Movement != null && (p.Movement.IsRespawningOrDrowning || !p.Movement.IsVisible)) want = false; } catch { }
+
+                _rages.TryGetValue(p, out var rage);
+                if (!want)
+                {
+                    if (rage != null && rage.On)
+                    {
+                        rage.On = false;
+                        try { rage.Ps.Stop(true, ParticleSystemStopBehavior.StopEmitting); } catch { }
+                    }
+                    continue;
+                }
+
+                if (rage == null) { rage = CreateRage(); if (rage == null) continue; _rages[p] = rage; }
+
+                float t = Mathf.InverseLerp(min, Mathf.Max(min + 1f, Plugin.KillPercent.Value), pct);
+                var em = rage.Ps.emission;
+                em.rateOverTime = Mathf.Lerp(10f, 45f, t);
+                var main = rage.Ps.main;
+                Color hot  = Color.Lerp(new Color(1f, 0.62f, 0.18f), new Color(1f, 0.15f, 0.06f), t);
+                Color core = new Color(1f, 0.88f, 0.4f);
+                main.startColor = new ParticleSystem.MinMaxGradient(hot, core);
+
+                var anchor = p.ChestBone != null ? p.ChestBone : p.transform;
+                rage.Go.transform.position = anchor.position;
+                if (!rage.On) { rage.On = true; rage.Ps.Play(true); }
+            }
         }
 
-        private static bool CreateRage()
+        private static Rage CreateRage()
         {
             try
             {
                 if (_emberTex == null) _emberTex = MakeEmberTexture(32);
                 if (_rageMat == null) _rageMat = MakeUnlitMaterial(_emberTex, additive: true);
-                if (_rageMat == null) return false;
+                if (_rageMat == null) return null;
 
-                _rageGo = new GameObject("SbgRageEmbers");
-                _ragePs = _rageGo.AddComponent<ParticleSystem>();
+                var _rageGo = new GameObject("SbgRageEmbers");
+                var _ragePs = _rageGo.AddComponent<ParticleSystem>();
                 _ragePs.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
 
                 var main = _ragePs.main;
@@ -355,22 +381,29 @@ namespace SbgShields
                 r.sharedMaterial = _rageMat;
                 r.renderMode = ParticleSystemRenderMode.Billboard;
                 r.shadowCastingMode = ShadowCastingMode.Off; r.receiveShadows = false;
-                return true;
+                return new Rage { Go = _rageGo, Ps = _ragePs };
             }
             catch (Exception e)
             {
                 Plugin.Log.LogWarning("Rage embers create failed: " + e.Message);
-                return false;
+                return null;
             }
+        }
+
+        private static void DestroyRage(Rage rage)
+        {
+            if (rage == null) return;
+            rage.On = false;
+            if (rage.Go != null) UnityEngine.Object.Destroy(rage.Go);
         }
 
         private static void DestroyRage()
         {
-            _rageOn = false;
-            if (_rageGo != null) UnityEngine.Object.Destroy(_rageGo);
+            foreach (var kv in _rages) DestroyRage(kv.Value);
+            _rages.Clear();
             if (_rageMat != null) UnityEngine.Object.Destroy(_rageMat);
             if (_emberTex != null) UnityEngine.Object.Destroy(_emberTex);
-            _rageGo = null; _ragePs = null; _rageMat = null; _emberTex = null;
+            _rageMat = null; _emberTex = null;
         }
 
         private static Texture2D MakeEmberTexture(int size)

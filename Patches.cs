@@ -371,6 +371,10 @@ namespace SbgShields
             try { timeout = GameManager.PlayerMovementSettings.KnockoutTimeOutDuration; } catch { }
             double since = Time.timeAsDouble - mv.IsKnockedOutTimestamp;
             if (since >= timeout) { Released(mv, "knockout timed out"); return false; }
+            // Our own, shorter cap: a body that has not found ground this long after its
+            // stun ended is stuck on something, and the game's 10 s is too long to wait.
+            if (_holding && Time.timeAsDouble - _holdingSince >= Mathf.Max(0.5f, Plugin.StayDownMaxTime.Value))
+            { Released(mv, "held long enough"); return false; }
 
             if (_grantedFor != mv.IsKnockedOutTimestamp)
             {

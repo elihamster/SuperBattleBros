@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.12 (test build)
+
+- The mod now has its own network message, sent only once everyone has passed the handshake. Percent is shared, so other players' rage embers and trails run off their real number; a star KO plays on every screen; the player you parried hears it.
+- A hit refused while you are already down no longer shoves your body. Being immune and tumbling used to mean being juggled around the sky until the game's 10 s time-out forced a wake-up under the gold shield.
+- The stay-down hold has a 3 s cap after the stun ends (`Launch.StayDownMaxTime`).
+
 ## 0.7.11 (test build)
 
 - Everyone's bubble is tinted to their skin colour, not just your own. The magnet item's shield too, since from another machine they are the same thing.
