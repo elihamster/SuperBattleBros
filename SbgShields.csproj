@@ -18,6 +18,8 @@
     <NoWarn>CS0436;CS1701;CS1702</NoWarn>
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- decomp\ holds the decompiled game assemblies for reading, never for compiling. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);decomp\**;dist\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <!--

@@ -738,6 +738,7 @@ namespace SbgShields
         {
 #if SBG_DEV
             PollDebugConfig();
+            SettingsDump.Tick();
 #endif
             ModHandshake.Tick();
             if (_lingerUntil > double.MinValue && Time.timeAsDouble >= _lingerUntil) CancelLingeringShield("linger over");
