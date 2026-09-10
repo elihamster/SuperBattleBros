@@ -49,3 +49,7 @@ Open an issue at https://github.com/elihamster/SuperBattleBros/issues and includ
 - which version you and everyone else in the lobby were on,
 - whether you were the host,
 - the lines from `BepInEx\LogOutput.log` that contain `SBG Shields` (in r2modman: Settings > Browse profile folder). The mod logs what it did and why; those lines are usually the whole answer.
+
+## Building from source
+
+Needs the .NET SDK, the game installed through Steam, and BepInEx in an r2modman profile. `dotnet build` produces the developer build; `dotnet build -c Release` the one that ships. If your Steam or profile paths differ from the defaults, copy `SbgShields.csproj.local.example` to `SbgShields.csproj.local` and set them there. `.\package.ps1` builds Release and zips a Thunderstore package into `dist\`.

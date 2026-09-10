@@ -25,7 +25,7 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 $manifest = Get-Content thunderstore\manifest.json -Raw | ConvertFrom-Json
 $manifest.version_number = $ver
 $manifest | ConvertTo-Json -Depth 5 | Set-Content "$stage\manifest.json" -Encoding UTF8
-Copy-Item thunderstore\README.md, thunderstore\CHANGELOG.md, thunderstore\icon.png, $dll $stage
+Copy-Item README.md, CHANGELOG.md, thunderstore\icon.png, $dll $stage
 
 New-Item -ItemType Directory -Force dist | Out-Null
 $zip = "dist\SuperBattleBros-$ver.zip"
