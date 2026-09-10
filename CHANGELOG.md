@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.16 (test build)
+
+- Ten pips, drawn as the same five circles: a 1-pip hit takes half a circle. Costs: balls 2, pistol 3, homing ball 4, elephant gun 5, explosions and carts 6, swings a full break, freeze bomb 0. Percent per pip halved so percent is unchanged.
+- The bubble shows its state to everyone: full brightness at full pips, fading toward a faint shell as they go, with a white flash on each pip lost. Pips travel over the mod's network message.
+- The HUD circle that just lost a pip swells and flashes; the last-circle blink starts at two pips.
+
 ## 0.7.15 (test build)
 
 - Costs: guns 2 pips, explosions 3 (rocket, landmine, back-blast, magnet blast, laser and thunderstorm edge). Freeze bomb stays 0, balls 1 and 2, swings a full break.

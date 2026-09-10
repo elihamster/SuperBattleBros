@@ -22,6 +22,21 @@ namespace SbgShields
         internal static int    Pips;
         internal static float  Percent;
 
+        /// <summary>0..1, how much bubble is left. The HUD, the bubble's own brightness and the wire all read this.</summary>
+        internal static float PipFraction => Mathf.Clamp01(Pips / (float)Mathf.Max(1, Plugin.MaxPips.Value));
+
+        /// <summary>When pips last went down, and which HUD circle took it (index, two pips per circle). Drives the loss flash.</summary>
+        internal static double LastPipLossAt = double.MinValue;
+        internal static int    LastPipLossDot;
+
+        private static void LosePips(int n)
+        {
+            if (n <= 0) return;
+            Pips = Mathf.Max(0, Pips - n);
+            LastPipLossAt  = Time.timeAsDouble;
+            LastPipLossDot = Pips / 2;
+        }
+
         internal static double UseCooldownUntil   = double.MinValue;
 
         /// <summary>When the shield was last deliberately released. The perfect-parry window is measured from here.</summary>
@@ -305,16 +320,21 @@ namespace SbgShields
 
             switch (type)
             {
-                // 1 pip
+                // Ten pips, drawn as five circles of two. A cost of 1 is half a circle.
+                //   stray ball 2 (one circle)   homing ball 4      pistol 3 (a circle and a half)
+                //   elephant gun 5              explosions, carts 6 (three circles)
+                //   swing = full break          freeze bomb 0
                 case KnockoutType.ReturnedBall:
-                    return 1;
-
-                // 2 pips: guns.
-                case KnockoutType.DuelingPistol:
-                case KnockoutType.ElephantGun:
-                case KnockoutType.DeflectedDuelingPistolShot:
-                case KnockoutType.DeflectedElephantGunShot:
                     return 2;
+
+                // Guns. The pistol is the game's weakest gun, the elephant gun its hardest
+                // ordinary hit (60 m/s against a swing's 30), so they are not priced alike.
+                case KnockoutType.DuelingPistol:
+                case KnockoutType.DeflectedDuelingPistolShot:
+                    return 3;
+                case KnockoutType.ElephantGun:
+                case KnockoutType.DeflectedElephantGunShot:
+                    return 5;
 
                 // Balls: a homing ball is a bigger hit than a stray one, but it is still a
                 // ball. It used to be a full break, which meant any locked-on ball popped
@@ -322,7 +342,7 @@ namespace SbgShields
                 case KnockoutType.SwingProjectile:
                 case KnockoutType.ReflectedSwingProjectile:
                 case KnockoutType.RocketDriverSwingProjectile:
-                    return projectileTargeted ? 2 : 1;
+                    return projectileTargeted ? 4 : 2;
 
                 // Free. A freeze bomb still freezes everyone else in range; the bubble's
                 // holder is spared, and that is the whole reward.
@@ -330,8 +350,8 @@ namespace SbgShields
                 case KnockoutType.ReflectedFreezeBomb:
                     return 0;
 
-                // 3 pips: explosions (the blast still happens, against everyone else
-                // nearby) and the heavy kinetic hits.
+                // Three circles: explosions (the blast still happens, against everyone
+                // else nearby) and the heavy kinetic hits.
                 case KnockoutType.Rocket:
                 case KnockoutType.ReflectedRocket:
                 case KnockoutType.Landmine:
@@ -343,7 +363,7 @@ namespace SbgShields
                 case KnockoutType.TrafficVehicle:
                 case KnockoutType.RocketDriverSwing:
                 case KnockoutType.RocketDriverSwingPostHitSpin:
-                    return 3;
+                    return 6;
 
                 // Unblockable: the shield drops and you eat the hit.
                 case KnockoutType.OrbitalLaserDirectHit:
@@ -754,7 +774,7 @@ namespace SbgShields
                 }
                 else
                 {
-                    Pips -= cost;
+                    LosePips(cost);
                     if (Plugin.AbsorbedHitsCancelKnockback.Value)
                     {
                         PendingVelocityCorrection    = -incomingVelocityChange;
@@ -1056,7 +1076,7 @@ namespace SbgShields
             }
             else
             {
-                Pips -= cost;
+                LosePips(cost);
                 if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Reflected {what}: -{cost} pips, {Pips} left.");
             }
         }
@@ -1119,7 +1139,7 @@ namespace SbgShields
 
         internal static void Break(PlayerInfo player, bool playBreakEffect)
         {
-            Pips = 0;
+            LosePips(Pips);
             double now = Time.timeAsDouble;
             BreakCooldownUntil = now + Plugin.BreakCooldown.Value;
             UseCooldownUntil   = Math.Max(UseCooldownUntil, now + Plugin.UseCooldown.Value);

@@ -118,7 +118,66 @@ namespace SbgShields
         {
             _armed = null; _consumed = false;
             if (!Enabled || !IsOurs(p)) return;
-            _armed = Skin.Of(p);
+            _armed = BubbleColour(p);
+        }
+
+        // ---- Bubble state, visible to everyone ----------------------------------
+        // A bubble looks like what it has left: full brightness at full pips, fading
+        // toward a faint shell as they go, and a white crack flash the instant one is
+        // lost. Ours reads ShieldState; everyone else's reads the pip fraction SbgNet
+        // carries, so the attacker sees the bubble weaken as they chip it.
+
+        private static readonly Dictionary<PlayerInfo, float>  _lastFraction = new Dictionary<PlayerInfo, float>();
+        private static readonly Dictionary<PlayerInfo, double> _crackUntil   = new Dictionary<PlayerInfo, double>();
+        private static readonly Dictionary<PlayerInfo, Color>  _lastApplied  = new Dictionary<PlayerInfo, Color>();
+        private const double CrackFlash = 0.15;
+
+        private static float FractionOf(PlayerInfo p)
+        {
+            if (Local.Is(p)) return ShieldState.PipFraction;
+            return SbgNet.TryGetPipFraction(p, out float f) ? f : 1f;
+        }
+
+        /// <summary>The colour this player's bubble should be right now.</summary>
+        internal static Color BubbleColour(PlayerInfo p)
+        {
+            var skin = Skin.Of(p);
+            if (p == null) return skin;
+            double now = Time.timeAsDouble;
+
+            float f = FractionOf(p);
+            if (_lastFraction.TryGetValue(p, out float last) && f < last - 0.001f) _crackUntil[p] = now + CrackFlash;
+            _lastFraction[p] = f;
+
+            if (_crackUntil.TryGetValue(p, out double until) && now < until) return Color.Lerp(skin, Color.white, 0.85f);
+
+            float bright = Mathf.Lerp(Plugin.BubbleMinBrightness.Value, 1f, f);
+            return new Color(skin.r * bright, skin.g * bright, skin.b * bright, skin.a);
+        }
+
+        /// <summary>Re-tint any active bubble whose state changed since the last frame.</summary>
+        private static void TickBubbleState()
+        {
+            if (!Enabled) return;
+            TouchPlayer(GameManager.LocalPlayerInfo);
+            try { var r = GameManager.RemotePlayers; if (r != null) foreach (var p in r) TouchPlayer(p); } catch { }
+        }
+
+        private static void TouchPlayer(PlayerInfo p)
+        {
+            if (p == null) return;
+            try
+            {
+                if (!p.IsElectromagnetShieldActive) { _lastApplied.Remove(p); return; }
+                if (Local.Is(p) && (_flashUntil != double.MinValue || _warnActive)) return;   // parry flash / pip blink own the colour right now
+                var col = p.ElectromagnetShieldCollider;
+                if (col == null) return;
+                var c = BubbleColour(p);
+                if (_lastApplied.TryGetValue(p, out var prev) && prev == c) return;
+                _lastApplied[p] = c;
+                Apply(col.transform, c, "bubble state");
+            }
+            catch { }
         }
 
         internal static void Disarm() { _armed = null; }
@@ -158,7 +217,7 @@ namespace SbgShields
             var p = _flashOn; _flashOn = null;
             if (p == null) return;
             var col = p.ElectromagnetShieldCollider;
-            if (col != null) Apply(col.transform, Skin.Of(p), "parry flash over");
+            if (col != null) Apply(col.transform, BubbleColour(p), "parry flash over");
         }
 
         // ---- Pip warning -------------------------------------------------------
@@ -176,7 +235,8 @@ namespace SbgShields
         private static void TickPipWarning()
         {
             var p = GameManager.LocalPlayerInfo;
-            bool want = Enabled && Plugin.PipWarning.Value && Plugin.WeActivated && ShieldState.Pips == 1 &&
+            // Last circle: two pips or fewer, since a circle is two.
+            bool want = Enabled && Plugin.PipWarning.Value && Plugin.WeActivated && ShieldState.Pips > 0 && ShieldState.Pips <= 2 &&
                         p != null && p.IsElectromagnetShieldActive && _flashUntil == double.MinValue;
 
             if (!want)
@@ -185,7 +245,7 @@ namespace SbgShields
                 {
                     _warnActive = false;
                     if (_warnDim && p != null && p.ElectromagnetShieldCollider != null)
-                        Apply(p.ElectromagnetShieldCollider.transform, Skin.Of(p), "pip warning over");
+                        Apply(p.ElectromagnetShieldCollider.transform, BubbleColour(p), "pip warning over");
                     _warnDim = false;
                 }
                 return;
@@ -196,8 +256,8 @@ namespace SbgShields
             bool bright = (Time.timeAsDouble * 5.0) % 1.0 < 0.5;   // 5 Hz
             if (_warnActive && bright == _warnDim) return;
             _warnActive = true; _warnDim = bright;
-            var c = Skin.Of(p);
-            Apply(col.transform, bright ? Color.Lerp(c, Color.white, 0.7f) : c, "pip warning");
+            var c = BubbleColour(p);
+            Apply(col.transform, bright ? Color.Lerp(Skin.Of(p), Color.white, 0.7f) : c, "pip warning");
         }
 
         /// <summary>
@@ -342,6 +402,7 @@ namespace SbgShields
         {
             TickParryFlash();   // before the early-out: a flash can be pending with nothing instanced yet
             TickPipWarning();
+            TickBubbleState();
             if (_instances.Count == 0) return;
 
             double now = Time.timeAsDouble;
@@ -389,6 +450,7 @@ namespace SbgShields
             _dumped.Clear();
             _restored = true;
             _armed = null;
+            _lastFraction.Clear(); _crackUntil.Clear(); _lastApplied.Clear();
             BubbleMaterialTintPatch.DestroyAll();
         }
 

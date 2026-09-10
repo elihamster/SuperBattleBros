@@ -30,7 +30,7 @@ namespace SbgShields
     /// </summary>
     internal static class SbgNet
     {
-        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3 }
+        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3, Pips = 4 }
 
         internal struct Msg : NetworkMessage
         {
@@ -42,7 +42,10 @@ namespace SbgShields
         private static bool _serverReg, _clientReg, _serializersReg, _warned;
         private static double _lastPercentSend = double.MinValue;
         private static float  _lastPercentSent = float.MinValue;
+        private static double _lastPipsSend = double.MinValue;
+        private static float  _lastPipsSent = float.MinValue;
         private static readonly Dictionary<uint, float> _remotePercent = new Dictionary<uint, float>();
+        private static readonly Dictionary<uint, float> _remotePips = new Dictionary<uint, float>();
         private static int _received, _sent;
 
         internal static int Received => _received;
@@ -76,7 +79,9 @@ namespace SbgShields
                 {
                     _clientReg = false;
                     _remotePercent.Clear();
+                    _remotePips.Clear();
                     _lastPercentSent = float.MinValue;
+                    _lastPipsSent = float.MinValue;
                 }
 
                 // Percent: on change, at most ten times a second, plus a refresh every two
@@ -89,6 +94,15 @@ namespace SbgShields
                     if ((changed && now - _lastPercentSend >= 0.1) || now - _lastPercentSend >= 2.0)
                     {
                         if (Send(Kind.Percent, pct)) { _lastPercentSent = pct; _lastPercentSend = now; }
+                    }
+
+                    // Pips as a fraction, same cadence: the bubble's brightness on other
+                    // screens is drawn from this.
+                    float pips = ShieldState.PipFraction;
+                    bool pipsChanged = Mathf.Abs(pips - _lastPipsSent) >= 0.01f;
+                    if ((pipsChanged && now - _lastPipsSend >= 0.05) || now - _lastPipsSend >= 2.0)
+                    {
+                        if (Send(Kind.Pips, pips)) { _lastPipsSent = pips; _lastPipsSend = now; }
                     }
                 }
             }
@@ -116,7 +130,7 @@ namespace SbgShields
             try
             {
                 if (conn == null) return;
-                if (m.Kind < (byte)Kind.Percent || m.Kind > (byte)Kind.Parry) return;
+                if (m.Kind < (byte)Kind.Percent || m.Kind > (byte)Kind.Pips) return;
                 if (float.IsNaN(m.A) || float.IsInfinity(m.A)) return;
                 var p = FindPlayer(m.NetId);
                 if (p == null || p.connectionToClient != conn) return;   // only about yourself
@@ -145,6 +159,9 @@ namespace SbgShields
                     case Kind.Parry:
                         RemoteParryFeedback(p);
                         break;
+                    case Kind.Pips:
+                        _remotePips[m.NetId] = Mathf.Clamp01(m.A);
+                        break;
                 }
             }
             catch (Exception e) { WarnOnce("client", e); }
@@ -156,6 +173,14 @@ namespace SbgShields
             pct = 0f;
             if (p == null) return false;
             try { return _remotePercent.TryGetValue(p.netId, out pct); } catch { return false; }
+        }
+
+        /// <summary>Another player's pips as a 0..1 fraction, if they have told us.</summary>
+        internal static bool TryGetPipFraction(PlayerInfo p, out float fraction)
+        {
+            fraction = 1f;
+            if (p == null) return false;
+            try { return _remotePips.TryGetValue(p.netId, out fraction); } catch { return false; }
         }
 
         private static void RemoteParryFeedback(PlayerInfo p)
@@ -194,6 +219,7 @@ namespace SbgShields
             try { NetworkClient.UnregisterHandler<Msg>(); } catch { }
             _serverReg = _clientReg = false;
             _remotePercent.Clear();
+            _remotePips.Clear();
         }
     }
 }

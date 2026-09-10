@@ -494,22 +494,43 @@ namespace SbgShields
 
             if (!showPips) { GUI.color = prev; return; }
 
-            // Pip dots under the bubble, popping in left to right when they reappear.
-            int max = Mathf.Max(1, Plugin.MaxPips.Value);
+            // Pip circles under the bubble: two pips per circle, so a 1-pip hit takes
+            // half a circle. They pop in left to right when they come back, and the
+            // circle that just lost something swells and goes white for a moment.
+            int maxPips = Mathf.Max(1, Plugin.MaxPips.Value);
+            int circles = (maxPips + 1) / 2;
             float dot = 12f * scale, dgap = 5f * scale;
-            float rowW = max * dot + (max - 1) * dgap;
+            float rowW = circles * dot + (circles - 1) * dgap;
             float dx = rect.center.x - rowW * 0.5f;
             float dy = rect.yMax + 4f * scale;
-            double since = Time.timeAsDouble - _pipsShownAt;
-            for (int i = 0; i < max; i++)
+            double now = Time.timeAsDouble;
+            double since = now - _pipsShownAt;
+            for (int i = 0; i < circles; i++)
             {
-                bool filled = i < ShieldState.Pips;
+                int have = Mathf.Clamp(ShieldState.Pips - i * 2, 0, 2);   // 0 empty, 1 half, 2 full
                 float pop = PopEase((float)((since - i * 0.06) / 0.16));
                 if (pop <= 0f) continue;
                 float d = dot * pop;
+
+                bool lost = i == ShieldState.LastPipLossDot && now - ShieldState.LastPipLossAt < 0.25 && ShieldState.LastPipLossAt > _pipsShownAt;
+                if (lost) d *= 1f + 0.5f * (1f - (float)((now - ShieldState.LastPipLossAt) / 0.25));
+
                 float cx = dx + i * (dot + dgap) + dot * 0.5f, cy = dy + dot * 0.5f;
-                GUI.color = filled ? skin : new Color(0f, 0f, 0f, 0.55f);
-                GUI.DrawTexture(new Rect(cx - d * 0.5f, cy - d * 0.5f, d, d), _dotTex, ScaleMode.ScaleToFit, true);
+                var r = new Rect(cx - d * 0.5f, cy - d * 0.5f, d, d);
+
+                GUI.color = new Color(0f, 0f, 0f, 0.55f);
+                GUI.DrawTexture(r, _dotTex, ScaleMode.ScaleToFit, true);
+                if (have == 0) continue;
+
+                GUI.color = lost ? Color.white : skin;
+                if (have == 2) GUI.DrawTexture(r, _dotTex, ScaleMode.ScaleToFit, true);
+                else
+                {
+                    // Left half only: clip the same texture to half its width.
+                    GUI.BeginGroup(new Rect(r.x, r.y, r.width * 0.5f, r.height));
+                    GUI.DrawTexture(new Rect(0f, 0f, r.width, r.height), _dotTex, ScaleMode.ScaleToFit, true);
+                    GUI.EndGroup();
+                }
             }
             GUI.color = prev;
         }

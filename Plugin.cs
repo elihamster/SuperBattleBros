@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.15";
+        public const string Version = "0.7.16";
 
         internal static ManualLogSource Log;
 
@@ -176,6 +176,7 @@ namespace SbgShields
         internal static ConfigEntry<bool>  TintVanillaShield;
         internal static ConfigEntry<bool>  PipWarning;
         internal static ConfigEntry<bool>  BubbleReflects;
+        internal static ConfigEntry<float> BubbleMinBrightness;
 
         // Immunity look (the game's comeback shield)
         internal static ConfigEntry<bool>  ImmunityFlickerEnabled;
@@ -292,8 +293,9 @@ namespace SbgShields
                 "'Activate electromagnet' rate checker flags activations closer than 0.5s apart.");
             ShieldAbsorbsHits = Config.Bind("Shield", "ShieldAbsorbsHits", true,
                 "Master switch for the pip economy. Off = vanilla shield behaviour (blocks everything, never breaks).");
-            MaxPips = Config.Bind("Shield", "MaxPips", 5,
-                "Shield HP. Chip hits cost 1-3, big hits break it outright. No regeneration.");
+            MaxPips = Config.Bind("Shield", "MaxPips", 10,
+                "Bubble HP. Drawn as five circles of two pips each, so a 1-pip hit takes half a circle. Balls 2, pistol 3, " +
+                "homing ball 4, elephant gun 5, explosions and carts 6, swings break it outright. No regeneration.");
             UseCooldown = Config.Bind("Shield", "UseCooldown", 1.0f,
                 "Seconds after releasing the shield before it can be raised again. Anti-flicker.");
             BreakCooldown = Config.Bind("Shield", "BreakCooldown", 10.0f,
@@ -325,8 +327,8 @@ namespace SbgShields
                 "OrbitalLaserPeripheralHit, RocketDriverSwing, RocketDriverSwingPostHitSpin, RocketDriverSwingProjectile, " +
                 "FreezeBomb, ReflectedFreezeBomb, ThunderstormPeripheralHit, ThunderstormDirectHit, OrbitalLaserDirectHit, " +
                 "RailgunDirectHit, TrafficVehicle, JumboBurgerGiantSwing, JumboBurgerGiantSwingProjectile, JumboBurgerGiantCollision, " +
-                "ElectromagnetShieldExplosion. Defaults: freeze bomb 0; stray/returned balls 1; guns and targeted balls 2; " +
-                "explosions, carts, vehicles, rocket driver 3; swings/giant = full; laser/thunder/railgun direct = unblockable.");
+                "ElectromagnetShieldExplosion. Defaults (of 10 pips): freeze bomb 0; stray/returned balls 2; pistol 3; homing ball 4; " +
+                "elephant gun 5; explosions, carts, vehicles, rocket driver 6; swings/giant = full; laser/thunder/railgun direct = unblockable.");
 
             // The three master switches. Each layer comes off cleanly on its own:
             //   Shield.ShieldAbsorbsHits  - pips. Off = vanilla shield: blocks everything, never breaks.
@@ -401,8 +403,8 @@ namespace SbgShields
                 "longer stun the more beaten up you are, which reads as being juggled. Set 1.0 for vanilla stun at every percent.");
             PercentPerHitBase = Config.Bind("Percent", "PercentPerHitBase", 5f,
                 "Percent gained by any chip-class hit, before the per-pip part.");
-            PercentPerPip = Config.Bind("Percent", "PercentPerPip", 4f,
-                "Extra percent per pip of the hit's cost (a 3-pip hit = base + 3*this).");
+            PercentPerPip = Config.Bind("Percent", "PercentPerPip", 2f,
+                "Extra percent per pip of the hit's cost (a 6-pip rocket = base + 6*this). Halved when pips went 5 -> 10, so the percent is unchanged.");
             PercentPerFullBreakHit = Config.Bind("Percent", "PercentPerFullBreakHit", 25f,
                 "Percent gained from a full-break-class hit landing unshielded.");
             ExplosionPercentFalloff = Config.Bind("Percent", "ExplosionPercentFalloff", true,
@@ -599,7 +601,10 @@ namespace SbgShields
             TintVanillaShield = Config.Bind("Bubble", "TintVanillaShield", true,
                 "Recolor the game's own shield particle (hold, dissolve, hit sparks, break) to your skin color for the Shift shield. The magnet item stays team-colored.");
             PipWarning = Config.Bind("Bubble", "PipWarning", true,
-                "Blink the bubble when it is down to its last pip: one more chip breaks it. Needs TintVanillaShield.");
+                "Blink the bubble when it is down to its last circle (two pips or fewer). Needs TintVanillaShield.");
+            BubbleMinBrightness = Config.Bind("Bubble", "BubbleMinBrightness", 0.45f,
+                "How bright the bubble is with almost nothing left, as a fraction of its full-pip colour. It fades from 1 toward " +
+                "this as pips go, on every screen, so an attacker can see it weaken. A white flash marks each pip lost.");
             BubbleReflects = Config.Bind("Bubble", "BubbleReflects", false,
                 "Off: a held bubble absorbs. Balls, rockets and bombs pass into you and cost pips; nothing bounces back. " +
                 "On: the game's own behaviour, where every shield is a wall that reflects whatever touches it. " +
@@ -713,6 +718,8 @@ namespace SbgShields
             // 0.7.9: no defaults changed. Parry scan fix, bright pip blink, handshake nudge + diagnostics, HUD reason line.
             // 0.7.14: the game's real knockback table (settings dump) showed guns are its strongest hits; bullets 0.85 -> 0.65.
             "Launch.BulletForceScale",
+            // 0.7.16: ten pips drawn as five circles; PercentPerPip halved to keep percent the same.
+            "Shield.MaxPips", "Percent.PercentPerPip",
         };
 
         private void ResetConfigIfVersionChanged()
