@@ -50,11 +50,13 @@ namespace SbgShields
                 try { obj = prop.GetValue(null); } catch { continue; }
                 if (obj == null) continue;
 
+                // One object that throws must not stall every object after it, forever.
+                _written.Add(prop.Name);
                 var sb = new StringBuilder();
                 sb.AppendLine($"\n## {prop.Name} ({obj.GetType().Name}) at {DateTime.Now:HH:mm:ss}");
-                DumpObject(sb, obj, "");
+                try { DumpObject(sb, obj, ""); }
+                catch (Exception e) { sb.AppendLine($"  <dump aborted: {e.GetType().Name}: {e.Message}>"); }
                 File.AppendAllText(Path, sb.ToString());
-                _written.Add(prop.Name);
                 Plugin.Log.LogInfo($"Settings dump: wrote {prop.Name}.");
             }
         }
