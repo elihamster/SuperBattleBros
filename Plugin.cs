@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.18";
+        public const string Version = "0.7.19";
 
         internal static ManualLogSource Log;
 
@@ -236,10 +236,10 @@ namespace SbgShields
         internal static double LastOurShieldReleaseTime = double.MinValue;
 
         /// <summary>
-        /// The shield's body outlives the keypress by ParryLinger. WeActivated goes false
-        /// the instant you let go -- rooting, jumping and swinging come straight back --
-        /// but the collider stays, so vanilla reflection and the shield-hit effects still
-        /// have something to work with while the parry window is open.
+        /// The bubble's body outlives the keypress by ParryLinger, cosmetically. WeActivated
+        /// goes false the instant you let go -- rooting, jumping and swinging come straight
+        /// back -- and ResolveKnockout treats a lingering body as no bubble at all. It exists
+        /// so a tap plays intro -> full -> dissolve instead of the game's full -> dissolve.
         /// </summary>
         private static double _lingerUntil = double.MinValue;
 
@@ -376,11 +376,11 @@ namespace SbgShields
             PerfectParrySound = Config.Bind("Parry", "PerfectParrySound", true,
                 "Play the game's own blocked-knockout sound on a parry, over the normal shield hit.");
 
-            ParryLinger = Config.Bind("Parry", "ParryLinger", 0f,
-                "Seconds the shield's body stays up after you let go of the key, while you already have your movement back. " +
-                "OFF by default since 0.7.8: the parry no longer needs it (it is armed by what is in reach when you let go), and a " +
-                "bubble trailing behind a player who is already running reads wrong. Above 0 it brings back the old side effect: " +
-                "while the body exists the game reflects homing balls off it and plays the shield-hit sound on every client.");
+            ParryLinger = Config.Bind("Parry", "ParryLinger", 0.3f,
+                "Seconds the bubble is still DRAWN after you let go, so a tap shows its intro before the dissolve instead of " +
+                "snapping from full to gone. Cosmetic only: a lingering bubble absorbs nothing and bounces nothing; a hit that " +
+                "arrives in that moment is parried if you read it and lands in full if you did not. Movement is yours the instant " +
+                "the key is up. 0 = the bubble vanishes with the keypress.");
             ParryGlow = Config.Bind("Parry", "ParryGlow", true,
                 "Flash the shield bright when a parry lands.");
             ParryGlowDuration = Config.Bind("Parry", "ParryGlowDuration", 0.35f, "How long the parry flash lasts, in seconds.");
@@ -730,6 +730,8 @@ namespace SbgShields
             "Shield.MaxPips", "Percent.PercentPerPip",
             // 0.7.17: hang time on, ramping from 65% (was off, gated at 125%).
             "Launch.LaunchHangTime", "Launch.CloudHitMinPercent",
+            // 0.7.19: the linger is cosmetic now and back on, so a tap shows the bubble's intro.
+            "Parry.ParryLinger",
         };
 
         private void ResetConfigIfVersionChanged()
@@ -988,7 +990,7 @@ namespace SbgShields
             ShieldState.OnShieldReleased();
 
             float linger = Mathf.Max(0f, ParryLinger.Value);
-            if (linger > 0f && ShieldState.GameplayParryEnabled)
+            if (linger > 0f && ModHandshake.GameplayEnabled)
             {
                 _lingerUntil = Time.timeAsDouble + linger;
                 if (VerboseLogging.Value) Log.LogInfo($"Shield key released; body lingers {linger:0.00}s.");

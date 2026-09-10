@@ -737,7 +737,9 @@ namespace SbgShields
                 return false;
             }
 
-            if (player.IsElectromagnetShieldActive && Plugin.ShieldAbsorbsHits.Value)
+            // A lingering body (ParryLinger, after the key is up) is drawn but stops
+            // nothing: the release is the commitment. Only the parry can save you now.
+            if (player.IsElectromagnetShieldActive && Plugin.ShieldAbsorbsHits.Value && !Plugin.ShieldLingering)
             {
                 LastKnockoutChargeTime = Time.timeAsDouble;
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.19 (test build)
+
+- A tapped bubble now plays its intro before dissolving. The body is drawn for 0.3 s after release, cosmetically only: it absorbs nothing, bounces nothing, and a hit in that moment is parried or lands in full. `Parry.ParryLinger`, 0 to turn it off.
+
 ## 0.7.18 (test build)
 
 - DI is camera-relative: push the stick toward where on the screen you want to drift and the launch turns that way, up to 20°. W is into the screen, S toward the camera. The separate up/down steer is gone.
