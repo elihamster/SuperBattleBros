@@ -436,27 +436,30 @@ namespace SbgShields
     }
 
     /// <summary>
-    /// The immunity the game grants on recovery. After a TECH (and only then) its
-    /// duration is ours: TechImmunity, which may be zero. Every other recovery keeps
-    /// the vanilla rule, including the orange repeat protection. A tech is not added
-    /// to the game's repeat-knockout count: getting up fast should not push you
-    /// toward the long bubble.
+    /// The immunity the game grants on recovery, the blue comeback shield. Ours in
+    /// two cases: after a TECH it is TechImmunity (may be zero, not counted toward
+    /// the repeat rule); after an ordinary get-up it is RecoveryImmunity, unless the
+    /// game's repeat rule would have made this a GOLD shield, in which case vanilla
+    /// runs untouched -- that one is the anti-juggle rule and keeps its teeth. With
+    /// RecoveryImmunity 0 every non-tech recovery is vanilla.
     /// </summary>
     [HarmonyPatch(typeof(PlayerMovement), "StartKnockoutImmunity")]
     internal static class TechImmunityPatch
     {
         private static AccessTools.FieldRef<PlayerMovement, Coroutine> _routine;
+        private static AccessTools.FieldRef<PlayerMovement, System.Collections.Generic.List<double>> _recent;
 
         private static bool Prepare()
         {
             try
             {
                 _routine = AccessTools.FieldRefAccess<PlayerMovement, Coroutine>("knockoutImmunityRoutine");
+                _recent  = AccessTools.FieldRefAccess<PlayerMovement, System.Collections.Generic.List<double>>("recentKnockoutImmunityTimestamps");
                 return true;
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning("knockoutImmunityRoutine not found; a tech gets the vanilla bubble. " + e.Message);
+                Plugin.Log.LogWarning("Knockout immunity fields not found; recoveries get the vanilla bubble. " + e.Message);
                 return false;
             }
         }
@@ -465,9 +468,38 @@ namespace SbgShields
         private static bool Prefix(PlayerMovement __instance, bool fromPlayerAggression)
         {
             if (!fromPlayerAggression || !Local.Is(__instance.PlayerInfo)) return true;
-            if (!ShieldState.ConsumeTechRecovery()) return true;
 
-            float duration = Mathf.Max(0f, Plugin.TechImmunity.Value);
+            float duration;
+            if (ShieldState.ConsumeTechRecovery())
+            {
+                duration = Mathf.Max(0f, Plugin.TechImmunity.Value);
+            }
+            else
+            {
+                duration = Plugin.RecoveryImmunity.Value;
+                if (duration <= 0f) return true;   // the game's rule
+                try
+                {
+                    // Would vanilla go gold? Same arithmetic it uses: prune the window, count, compare.
+                    var list = _recent(__instance);
+                    var s = GameManager.PlayerMovementSettings;
+                    double now = Time.timeAsDouble;
+                    if (list != null)
+                    {
+                        for (int i = list.Count - 1; i >= 0; i--)
+                            if (now - list[i] > s.KnockoutImmunityLongDurationKnockoutTimeWindow) list.RemoveAt(i);
+                        bool repeatRule = MatchSetupRules.GetValueAsBool(MatchSetupRules.Rule.RepeatRecoveryProtection);
+                        if (repeatRule && list.Count + 1 >= s.MinRecentKnockoutCountForLongImmunityDuration) return true;   // gold: vanilla's
+                        list.Add(now);   // ours counts toward the next gold, as vanilla's would
+                    }
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogWarning("Recovery immunity: could not read the repeat rule, using vanilla. " + e.Message);
+                    return true;
+                }
+            }
+
             try
             {
                 ref var routine = ref _routine(__instance);

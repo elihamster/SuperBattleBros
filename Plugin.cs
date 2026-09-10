@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.16";
+        public const string Version = "0.7.17";
 
         internal static ManualLogSource Log;
 
@@ -105,6 +105,8 @@ namespace SbgShields
         internal static ConfigEntry<float> LaunchHangWindow;
         internal static ConfigEntry<float> LaunchHangDuration;
         internal static ConfigEntry<float> CloudHitMinPercent;
+        internal static ConfigEntry<float> HangFullPercent;
+        internal static ConfigEntry<float> RecoveryImmunity;
         internal static ConfigEntry<bool>  StayDownUntilLanding;
         internal static ConfigEntry<float> StayDownMaxTime;
         internal static ConfigEntry<bool>  TumbleGravityUntilLanding;
@@ -467,15 +469,18 @@ namespace SbgShields
             LaunchDragAboveSpeed = Config.Bind("Launch", "LaunchDragAboveSpeed", 14f,
                 "Drag only touches speed ABOVE this (m/s). Everything below travels freely, so a launch keeps its sideways distance; " +
                 "only the extreme burst of a huge hit gets tamed.");
-            LaunchHangTime = Config.Bind("Launch", "LaunchHangTime", 0f,
-                "How much gravity is cancelled at the top of a cloud-hit arc (0.55 = 55% at the very apex, tapering to none as you speed up). " +
-                "OFF by default: it reads as slowing down mid-air then speeding up, because that is what it is. Try 0.3-0.5 on cloud hits only.");
+            LaunchHangTime = Config.Bind("Launch", "LaunchHangTime", 0.35f,
+                "How much gravity is cancelled at the top of a launch's arc at full strength (0.35 = 35% at the very apex, tapering to " +
+                "none as you speed up). The flight is the stun, and this is how the stun grows with percent: nothing below " +
+                "CloudHitMinPercent, ramping to full at HangFullPercent. 0 = off.");
+            HangFullPercent = Config.Bind("Launch", "HangFullPercent", 150f,
+                "Percent at which hang time reaches its full LaunchHangTime. Between CloudHitMinPercent and this it ramps up.");
             LaunchHangWindow = Config.Bind("Launch", "LaunchHangWindow", 7f,
                 "Vertical speed (m/s) within which hang time applies. Only near the apex, where vertical speed is small, so the rise and fall keep their shape.");
             LaunchHangDuration = Config.Bind("Launch", "LaunchHangDuration", 3f,
                 "Seconds after a launch during which hang time can apply.");
-            CloudHitMinPercent = Config.Bind("Launch", "CloudHitMinPercent", 125f,
-                "Percent at or above which a launch counts as a cloud hit. Hang time is the only thing left that reads it.");
+            CloudHitMinPercent = Config.Bind("Launch", "CloudHitMinPercent", 65f,
+                "Percent at or above which a launch starts to hang at its apex. Below this you fall like a body.");
             // Hit categories. Everything the mod does to a launch is a multiplier on the
             // game's own number, so the ordering explosive > bullet > melee holds only if
             // the game's base speeds do not invert it. The verbose "Hit <type>" line prints
@@ -520,6 +525,10 @@ namespace SbgShields
                 "off your own rocket was a free dash.");
             TechSelfInflicted = Config.Bind("Launch", "TechSelfInflicted", false,
                 "Whether a knockout you caused yourself (own rocket, own back-blast) can be teched. Off: you eat the landing you bought.");
+            RecoveryImmunity = Config.Bind("Launch", "RecoveryImmunity", 1f,
+                "Seconds of the game's blue comeback shield after you get up from a launch. The game's own rule is 3 s (a match " +
+                "setting), tuned for a game where the hit itself cost 3 s; with the flight as the stun that is far too generous and " +
+                "it crowds out the bubble. The gold shield for repeated knockouts is untouched. 0 = the game's rule.");
 
             PercentScalesWithSpeed = Config.Bind("Percent", "PercentScalesWithSpeed", true,
                 "Percent gain scales with how hard the hit was: the game's own knockback speed over PercentReferenceSpeed. A point-blank " +
@@ -720,6 +729,8 @@ namespace SbgShields
             "Launch.BulletForceScale",
             // 0.7.16: ten pips drawn as five circles; PercentPerPip halved to keep percent the same.
             "Shield.MaxPips", "Percent.PercentPerPip",
+            // 0.7.17: hang time on, ramping from 65% (was off, gated at 125%).
+            "Launch.LaunchHangTime", "Launch.CloudHitMinPercent",
         };
 
         private void ResetConfigIfVersionChanged()

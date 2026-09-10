@@ -860,7 +860,9 @@ namespace SbgShields
             PendingPercentGain           = GetPercentGain(cost, type, incomingVelocityChange.magnitude);
             LaunchDragUntil              = Time.timeAsDouble + Plugin.LaunchDragDuration.Value;
             LaunchHangUntil              = Time.timeAsDouble + Plugin.LaunchHangDuration.Value;
-            LaunchHangScale              = ScaleT;
+            // Hang ramps from nothing at CloudHitMinPercent to full at HangFullPercent: a
+            // 70% launch barely lingers, a 150% one floats at the top for everyone to see.
+            LaunchHangScale              = Mathf.InverseLerp(Plugin.CloudHitMinPercent.Value, Mathf.Max(Plugin.CloudHitMinPercent.Value + 1f, Plugin.HangFullPercent.Value), Percent);
             Launch.Begin();
             if (Plugin.VerboseLogging.Value)
                 Plugin.Log.LogInfo($"Hit {type} [{cat}] at {Percent:0}%{(explosive ? $" from {PendingHitDistance:0.0}m" : "")}: force x{forceMult:0.00} x{catScale:0.00}, |v| {incomingVelocityChange.magnitude:0.0} -> {shaped.magnitude:0.0} (h {new Vector2(shaped.x, shaped.z).magnitude:0.0}, up {shaped.y:0.0}), hitstun x{PendingHitstunMultiplier:0.00}");

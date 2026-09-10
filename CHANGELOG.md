@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.17 (test build)
+
+- Hang time is on: a launch lingers at the top of its arc, nothing below 65% and full at 150%. The flight is the stun, and this is how it grows with percent. `Launch.LaunchHangTime`, `CloudHitMinPercent`, `HangFullPercent`.
+- The blue comeback shield after an ordinary get-up is 1 s (`Launch.RecoveryImmunity`, 0 = the game's 3 s). The gold shield for repeated knockouts is untouched.
+
 ## 0.7.16 (test build)
 
 - Ten pips, drawn as the same five circles: a 1-pip hit takes half a circle. Costs: balls 2, pistol 3, homing ball 4, elephant gun 5, explosions and carts 6, swings a full break, freeze bomb 0. Percent per pip halved so percent is unchanged.
