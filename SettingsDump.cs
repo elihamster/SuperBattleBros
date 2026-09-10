@@ -49,16 +49,60 @@ namespace SbgShields
                 object obj;
                 try { obj = prop.GetValue(null); } catch { continue; }
                 if (obj == null) continue;
-
-                // One object that throws must not stall every object after it, forever.
-                _written.Add(prop.Name);
-                var sb = new StringBuilder();
-                sb.AppendLine($"\n## {prop.Name} ({obj.GetType().Name}) at {DateTime.Now:HH:mm:ss}");
-                try { DumpObject(sb, obj, ""); }
-                catch (Exception e) { sb.AppendLine($"  <dump aborted: {e.GetType().Name}: {e.Message}>"); }
-                File.AppendAllText(Path, sb.ToString());
-                Plugin.Log.LogInfo($"Settings dump: wrote {prop.Name}.");
+                WriteObject(prop.Name, obj);
             }
+
+            // The per-hit knockback numbers are not on GameManager. They sit on settings
+            // attached to each Hittable; the local player's carry the ones that matter
+            // for being hit. Plus the bubble's radius, which is a collider, not a setting.
+            var local = GameManager.LocalPlayerInfo;
+            if (local != null)
+            {
+                Hittable h = null;
+                try { h = local.AsHittable; } catch { }
+                if (h != null)
+                {
+                    TryWrite("Player.Hittable.SwingSettings",      () => h.SwingSettings);
+                    TryWrite("Player.Hittable.ProjectileSettings", () => h.ProjectileSettings);
+                    TryWrite("Player.Hittable.ItemSettings",       () => h.ItemSettings);
+                    TryWrite("Player.Hittable.DiveSettings",       () => h.DiveSettings);
+                }
+                if (!_written.Contains("Player.ShieldCollider"))
+                {
+                    try
+                    {
+                        var col = local.ElectromagnetShieldCollider;
+                        if (col != null)
+                        {
+                            _written.Add("Player.ShieldCollider");
+                            float r = col.radius * Mathf.Max(col.transform.lossyScale.x, col.transform.lossyScale.y, col.transform.lossyScale.z);
+                            File.AppendAllText(Path, $"\n## Player.ShieldCollider\nradius = {col.radius}\nlossyScale = {col.transform.lossyScale}\nworldRadius = {r}\nisTrigger = {col.isTrigger}\nlayer = {col.gameObject.layer} ({LayerMask.LayerToName(col.gameObject.layer)})\n");
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        private static void TryWrite(string name, Func<object> get)
+        {
+            if (_written.Contains(name)) return;
+            object obj;
+            try { obj = get(); } catch { return; }
+            if (obj == null) return;
+            WriteObject(name, obj);
+        }
+
+        private static void WriteObject(string name, object obj)
+        {
+            // One object that throws must not stall every object after it, forever.
+            _written.Add(name);
+            var sb = new StringBuilder();
+            sb.AppendLine($"\n## {name} ({obj.GetType().Name}) at {DateTime.Now:HH:mm:ss}");
+            try { DumpObject(sb, obj, ""); }
+            catch (Exception e) { sb.AppendLine($"  <dump aborted: {e.GetType().Name}: {e.Message}>"); }
+            File.AppendAllText(Path, sb.ToString());
+            Plugin.Log.LogInfo($"Settings dump: wrote {name}.");
         }
 
         private static void DumpObject(StringBuilder sb, object obj, string indent)
