@@ -1,6 +1,7 @@
 #if SBG_DEV
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -12,45 +13,50 @@ namespace SbgShields
     /// <summary>
     /// DEV BUILD. The numbers the decompiler cannot see: knockout durations, gun ranges,
     /// ball speeds, shield radius, immunity windows. They live in Unity asset objects
-    /// that the game exposes as GameManager.*Settings. Once per session, as soon as
-    /// those exist, every public field and property of every one of them is written to
-    /// BepInEx\SbgSettingsDump.txt. Read that instead of guessing.
+    /// that the game exposes as GameManager.*Settings, each of which is null until the
+    /// game has loaded it (some only once a hole is running). Every couple of seconds
+    /// this looks at all of them and appends any it has not written yet to
+    /// BepInEx\SbgSettingsDump.txt, so whatever the session reaches gets captured and
+    /// a later, deeper session adds the rest. Read that file instead of guessing.
     /// </summary>
     internal static class SettingsDump
     {
-        private static bool _done;
+        private static readonly HashSet<string> _written = new HashSet<string>();
+        private static double _nextLook = double.MinValue;
+        private static bool _announced;
+        private static string Path => System.IO.Path.Combine(Paths.BepInExRootPath, "SbgSettingsDump.txt");
 
         internal static void Tick()
         {
-            if (_done) return;
-            try
-            {
-                if (GameManager.PlayerMovementSettings == null) return;   // assets not loaded yet
-            }
-            catch { return; }
-            _done = true;
-            try { Write(); }
+            if (Time.timeAsDouble < _nextLook) return;
+            _nextLook = Time.timeAsDouble + 2.0;
+            try { Look(); }
             catch (Exception e) { Plugin.Log.LogWarning("Settings dump failed: " + e.Message); }
         }
 
-        private static void Write()
+        private static void Look()
         {
-            var sb = new StringBuilder();
-            sb.AppendLine($"# SBG Shields settings dump, {DateTime.Now:yyyy-MM-dd HH:mm}. Every GameManager.*Settings object, public members only.");
-            int objects = 0;
+            if (!_announced)
+            {
+                _announced = true;
+                if (!File.Exists(Path)) File.WriteAllText(Path, $"# SBG Shields settings dump. Every GameManager.*Settings object, public members only, appended as the game loads them.\n");
+                Plugin.Log.LogInfo($"Settings dump: writing to {Path} as settings objects appear (some only exist once a hole is running).");
+            }
+
             foreach (var prop in typeof(GameManager).GetProperties(BindingFlags.Public | BindingFlags.Static))
             {
-                if (!prop.Name.EndsWith("Settings", StringComparison.Ordinal)) continue;
+                if (!prop.Name.EndsWith("Settings", StringComparison.Ordinal) || _written.Contains(prop.Name)) continue;
                 object obj;
                 try { obj = prop.GetValue(null); } catch { continue; }
-                if (obj == null) { sb.AppendLine($"\n## {prop.Name}: null"); continue; }
-                objects++;
-                sb.AppendLine($"\n## {prop.Name} ({obj.GetType().Name})");
+                if (obj == null) continue;
+
+                var sb = new StringBuilder();
+                sb.AppendLine($"\n## {prop.Name} ({obj.GetType().Name}) at {DateTime.Now:HH:mm:ss}");
                 DumpObject(sb, obj, "");
+                File.AppendAllText(Path, sb.ToString());
+                _written.Add(prop.Name);
+                Plugin.Log.LogInfo($"Settings dump: wrote {prop.Name}.");
             }
-            string path = Path.Combine(Paths.BepInExRootPath, "SbgSettingsDump.txt");
-            File.WriteAllText(path, sb.ToString());
-            Plugin.Log.LogInfo($"Settings dump: {objects} settings objects written to {path}");
         }
 
         private static void DumpObject(StringBuilder sb, object obj, string indent)
