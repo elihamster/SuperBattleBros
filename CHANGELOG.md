@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.15 (test build)
+
+- Costs: guns 2 pips, explosions 3 (rocket, landmine, back-blast, magnet blast, laser and thunderstorm edge). Freeze bomb stays 0, balls 1 and 2, swings a full break.
+- Percent scales with how hard the hit was: the game's knockback speed over a full swing's 30 m/s, between half and double. A point-blank elephant gun is twice a swing; a pistol at range is half. Replaces the explosion distance falloff while on.
+- Teching tightened: one press is one attempt and a missed one locks the key out for 0.4 s; a tech roots you for 0.3 s before you can act; a launch you caused yourself cannot be teched.
+
 ## 0.7.14 (test build)
 
 - Costs against a held bubble: freeze bomb 0, rocket 2, landmine 2 (were full break, full break, 3). The explosion or the freeze still hits everyone else in range; the holder is spared.

@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.14";
+        public const string Version = "0.7.15";
 
         internal static ManualLogSource Log;
 
@@ -125,6 +125,14 @@ namespace SbgShields
         internal static ConfigEntry<bool>  TechEnabled;
         internal static ConfigEntry<float> TechWindow;
         internal static ConfigEntry<float> TechImmunity;
+        internal static ConfigEntry<float> TechLockout;
+        internal static ConfigEntry<float> TechRecovery;
+        internal static ConfigEntry<bool>  TechSelfInflicted;
+        // Percent by speed
+        internal static ConfigEntry<bool>  PercentScalesWithSpeed;
+        internal static ConfigEntry<float> PercentReferenceSpeed;
+        internal static ConfigEntry<float> PercentSpeedFactorMin;
+        internal static ConfigEntry<float> PercentSpeedFactorMax;
         internal static ConfigEntry<float> LandingStun;
         internal static ConfigEntry<float> BreakLandingStun;
         internal static ConfigEntry<bool>  LaunchTrail;
@@ -317,8 +325,8 @@ namespace SbgShields
                 "OrbitalLaserPeripheralHit, RocketDriverSwing, RocketDriverSwingPostHitSpin, RocketDriverSwingProjectile, " +
                 "FreezeBomb, ReflectedFreezeBomb, ThunderstormPeripheralHit, ThunderstormDirectHit, OrbitalLaserDirectHit, " +
                 "RailgunDirectHit, TrafficVehicle, JumboBurgerGiantSwing, JumboBurgerGiantSwingProjectile, JumboBurgerGiantCollision, " +
-                "ElectromagnetShieldExplosion. Defaults: freeze bomb 0; pistols/untargeted balls 1; targeted balls/rockets/mines/backblast/peripheral 2; " +
-                "carts/vehicles/rocket driver 3; swings/giant = full; laser/thunder/railgun direct = unblockable.");
+                "ElectromagnetShieldExplosion. Defaults: freeze bomb 0; stray/returned balls 1; guns and targeted balls 2; " +
+                "explosions, carts, vehicles, rocket driver 3; swings/giant = full; laser/thunder/railgun direct = unblockable.");
 
             // The three master switches. Each layer comes off cleanly on its own:
             //   Shield.ShieldAbsorbsHits  - pips. Off = vanilla shield: blocks everything, never breaks.
@@ -502,6 +510,23 @@ namespace SbgShields
             TechWindow = Config.Bind("Launch", "TechWindow", 0.2f, "Seconds before landing in which the press counts.");
             TechImmunity = Config.Bind("Launch", "TechImmunity", 0.2f,
                 "Seconds of comeback bubble after a tech. 0 = none at all; you are up and fully hittable.");
+            TechLockout = Config.Bind("Launch", "TechLockout", 0.4f,
+                "A press that did not tech locks the key out for this long after its window closes. One press is one attempt; " +
+                "mashing gets you one badly-timed attempt, not a guaranteed tech.");
+            TechRecovery = Config.Bind("Launch", "TechRecovery", 0.3f,
+                "Seconds you are rooted after a tech: up, but not yet moving, jumping, swinging or using items. Without this a tech " +
+                "off your own rocket was a free dash.");
+            TechSelfInflicted = Config.Bind("Launch", "TechSelfInflicted", false,
+                "Whether a knockout you caused yourself (own rocket, own back-blast) can be teched. Off: you eat the landing you bought.");
+
+            PercentScalesWithSpeed = Config.Bind("Percent", "PercentScalesWithSpeed", true,
+                "Percent gain scales with how hard the hit was: the game's own knockback speed over PercentReferenceSpeed. A point-blank " +
+                "elephant gun (60 m/s) gives twice a full swing's percent; a pistol at range (15 m/s) gives half. Explosions already " +
+                "lose speed with distance, so this replaces ExplosionPercentFalloff while it is on.");
+            PercentReferenceSpeed = Config.Bind("Percent", "PercentReferenceSpeed", 30f,
+                "The knockback speed (m/s) that gives exactly the listed percent. 30 is a full-power golf swing.");
+            PercentSpeedFactorMin = Config.Bind("Percent", "PercentSpeedFactorMin", 0.5f, "Floor on the speed factor, so a graze still counts.");
+            PercentSpeedFactorMax = Config.Bind("Percent", "PercentSpeedFactorMax", 2f, "Ceiling on the speed factor, so a rocket driver (90 m/s) is not five swings.");
             LandingStun = Config.Bind("Launch", "LandingStun", 0.25f,
                 "The flight is the stun. When your tumbling body lands, the get-up starts this many seconds later instead of after " +
                 "whatever is left of the game's own 3 s knockout timer, which is why a short launch used to leave you lying there " +

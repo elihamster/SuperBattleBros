@@ -9,9 +9,9 @@ namespace SbgShields
         internal static bool Is(PlayerInfo p) =>
             p != null && ReferenceEquals(p, GameManager.LocalPlayerInfo);
 
-        /// <summary>Only OUR Shift shield roots. The vanilla magnet item's shield is left alone.</summary>
+        /// <summary>Only OUR Shift bubble roots (the magnet item's shield is left alone), plus the moment after a tech.</summary>
         internal static bool IsRooted(PlayerInfo p) =>
-            Is(p) && p.IsElectromagnetShieldActive && Plugin.WeActivated;
+            Is(p) && ((p.IsElectromagnetShieldActive && Plugin.WeActivated) || ShieldState.TechRooted);
     }
 
     // =====================================================================
@@ -81,13 +81,16 @@ namespace SbgShields
     internal static class KnockoutEconomyPatch
     {
         [HarmonyPriority(Priority.Low)]   // can skip the original; see RecoveryHoldPatch
-        private static bool Prefix(PlayerMovement __instance, KnockoutType knockoutType,
+        private static bool Prefix(PlayerMovement __instance, PlayerInfo responsiblePlayer, KnockoutType knockoutType,
             Vector3 localOrigin, float distance, Vector3 incomingVelocityChange, ref bool __result, ref bool isNewKnockout,
             ref bool blockedByTeamProtection, out bool __state)
         {
             __state = false;
             if (!Local.Is(__instance.PlayerInfo)) return true;
             __state = true;
+
+            // Your own rocket, your own back-blast: a launch you paid for yourself.
+            ShieldState.PendingSelfInflicted = responsiblePlayer != null && ReferenceEquals(responsiblePlayer, __instance.PlayerInfo);
 
             // The game passes where the hit came from (in our local space) and how far
             // away it was. Explosions use both: direction to make the launch radial from
@@ -198,6 +201,7 @@ namespace SbgShields
             }
 
             ShieldState.CurrentKnockoutIsBreak = ShieldState.PendingIsBreak;
+            ShieldState.CurrentKnockoutSelfInflicted = ShieldState.PendingSelfInflicted;
             if (ShieldState.PendingHitstunMultiplier >= 0f)
                 t *= ShieldState.PendingHitstunMultiplier;
             else

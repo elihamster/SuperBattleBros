@@ -306,12 +306,15 @@ namespace SbgShields
             switch (type)
             {
                 // 1 pip
+                case KnockoutType.ReturnedBall:
+                    return 1;
+
+                // 2 pips: guns.
                 case KnockoutType.DuelingPistol:
                 case KnockoutType.ElephantGun:
                 case KnockoutType.DeflectedDuelingPistolShot:
                 case KnockoutType.DeflectedElephantGunShot:
-                case KnockoutType.ReturnedBall:
-                    return 1;
+                    return 2;
 
                 // Balls: a homing ball is a bigger hit than a stray one, but it is still a
                 // ball. It used to be a full break, which meant any locked-on ball popped
@@ -327,7 +330,8 @@ namespace SbgShields
                 case KnockoutType.ReflectedFreezeBomb:
                     return 0;
 
-                // 2 pips. The explosion still happens, against everyone else nearby.
+                // 3 pips: explosions (the blast still happens, against everyone else
+                // nearby) and the heavy kinetic hits.
                 case KnockoutType.Rocket:
                 case KnockoutType.ReflectedRocket:
                 case KnockoutType.Landmine:
@@ -335,9 +339,6 @@ namespace SbgShields
                 case KnockoutType.ThunderstormPeripheralHit:
                 case KnockoutType.OrbitalLaserPeripheralHit:
                 case KnockoutType.ElectromagnetShieldExplosion:
-                    return 2;
-
-                // 3 pips
                 case KnockoutType.GolfCart:
                 case KnockoutType.TrafficVehicle:
                 case KnockoutType.RocketDriverSwing:
@@ -595,14 +596,33 @@ namespace SbgShields
         private static string CostLabel(int cost) =>
             cost == CostFullBreak ? "a break" : cost == CostUnblockable ? "an unblockable" : cost + " pips";
 
-        internal static float GetPercentGain(int cost) => GetPercentGain(cost, null);
+        internal static float GetPercentGain(int cost) => GetPercentGain(cost, null, -1f);
 
-        internal static float GetPercentGain(int cost, KnockoutType? type)
+        internal static float GetPercentGain(int cost, KnockoutType? type) => GetPercentGain(cost, type, -1f);
+
+        /// <summary>
+        /// Percent scales with how hard the hit was: the game's own knockback speed for
+        /// the hit, over a reference of a full-power swing. A point-blank elephant gun
+        /// (60 m/s) is twice a swing; a pistol at range (15) is half. Speed already
+        /// encodes distance for explosions, so the separate explosion falloff steps
+        /// aside while this is on.
+        /// </summary>
+        internal static float SpeedFactor(float speed)
+        {
+            if (!Plugin.PercentScalesWithSpeed.Value || speed < 0f) return 1f;
+            float reference = Mathf.Max(1f, Plugin.PercentReferenceSpeed.Value);
+            return Mathf.Clamp(speed / reference, Plugin.PercentSpeedFactorMin.Value, Plugin.PercentSpeedFactorMax.Value);
+        }
+
+        internal static float GetPercentGain(int cost, KnockoutType? type, float speed)
         {
             float baseGain;
             if (cost == CostUnblockable)    baseGain = Plugin.PercentPerUnblockableHit.Value;
             else if (cost == CostFullBreak) baseGain = Plugin.PercentPerFullBreakHit.Value;
             else                            baseGain = Plugin.PercentPerHitBase.Value + Plugin.PercentPerPip.Value * cost;
+
+            if (Plugin.PercentScalesWithSpeed.Value && speed >= 0f)
+                return baseGain * SpeedFactor(speed);
 
             // Explosions already lose knockback with distance, so percent should follow:
             // standing at the edge of a rocket blast should not cost the same as eating it.
@@ -726,7 +746,7 @@ namespace SbgShields
                     QueueBreakBounce(player, incomingVelocityChange);
                     BreakTrace.Begin(3f);
                     BreakTrace.Log($"BUBBLE BREAK by {type} ({before} pips vs cost {cost}): bounce {Plugin.BreakBounceSpeed.Value:0.0} m/s up, stun x{PendingHitstunMultiplier:0.00}");
-                    PendingPercentGain           = GetPercentGain(cost, type) * Mathf.Clamp01(excess);
+                    PendingPercentGain           = GetPercentGain(cost, type, incomingVelocityChange.magnitude) * Mathf.Clamp01(excess);
                     if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"BUBBLE BREAK by {type} ({before} pips). Bounced, +{PendingPercentGain:0}%.");
                     _awaitingResult = true;
                     ForcingBreakKnockout = Plugin.BreakStunIgnoresComebackImmunity.Value;
@@ -754,7 +774,7 @@ namespace SbgShields
             {
                 _pendingWhileDown = true;
                 _pendingIncoming  = incomingVelocityChange;
-                PendingPercentGain        = GetPercentGain(cost, type);
+                PendingPercentGain        = GetPercentGain(cost, type, incomingVelocityChange.magnitude);
                 if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Hit {type} while down: vanilla knockback, +{PendingPercentGain:0}% pending.");
                 _awaitingResult = true;
                 return true;
@@ -817,7 +837,7 @@ namespace SbgShields
             PendingVelocityCorrection    = shaped - incomingVelocityChange;
             HasPendingVelocityCorrection = PendingVelocityCorrection.sqrMagnitude > 1e-6f;
             PendingHitstunMultiplier     = Mathf.Max(0.05f, hitstunMult);
-            PendingPercentGain           = GetPercentGain(cost, type);
+            PendingPercentGain           = GetPercentGain(cost, type, incomingVelocityChange.magnitude);
             LaunchDragUntil              = Time.timeAsDouble + Plugin.LaunchDragDuration.Value;
             LaunchHangUntil              = Time.timeAsDouble + Plugin.LaunchHangDuration.Value;
             LaunchHangScale              = ScaleT;
@@ -1137,10 +1157,31 @@ namespace SbgShields
         private static System.Reflection.MethodInfo _setKnockOutState;
         private static bool _setKnockOutStateLooked;
 
-        /// <summary>Shift went down. Only counts as a tech input while you are knocked out.</summary>
+        /// <summary>The knockout being resolved was caused by the victim (own rocket, own back-blast).</summary>
+        internal static bool PendingSelfInflicted;
+        internal static bool CurrentKnockoutSelfInflicted;
+
+        /// <summary>After a tech you are up but not yet acting: rooted for TechRecovery. The rooting patches read this.</summary>
+        internal static double TechRootUntil = double.MinValue;
+        internal static bool   TechRooted => Time.timeAsDouble < TechRootUntil;
+
+        /// <summary>
+        /// Shift went down while knocked out. One press is one attempt: it is live for
+        /// TechWindow, and if the ground does not arrive in that time the attempt is
+        /// spent and nothing counts again until TechLockout has passed. Holding or
+        /// mashing the key therefore gives you exactly one badly-timed attempt, the
+        /// way Smash treats it. Before this, every press refreshed the timer and
+        /// mashing was a guaranteed tech.
+        /// </summary>
         internal static void NoteShieldPress(PlayerInfo player)
         {
-            try { if (player != null && player.Movement != null && player.Movement.IsKnockedOut) _shieldPressAt = Time.timeAsDouble; }
+            try
+            {
+                if (player == null || player.Movement == null || !player.Movement.IsKnockedOut) return;
+                double now = Time.timeAsDouble;
+                if (now < _shieldPressAt + Plugin.TechWindow.Value + Plugin.TechLockout.Value) return;   // previous attempt still live or locked out
+                _shieldPressAt = now;
+            }
             catch { }
         }
 
@@ -1154,6 +1195,7 @@ namespace SbgShields
 
             bool tech = Plugin.TechEnabled.Value
                         && !CurrentKnockoutIsBreak   // the break bounce is the one stun you sit through
+                        && (Plugin.TechSelfInflicted.Value || !CurrentKnockoutSelfInflicted)   // no free movement tech off your own rocket
                         && now - _shieldPressAt <= Mathf.Max(0.02f, Plugin.TechWindow.Value);
             if (tech) { _techPending = true; return; }
 
@@ -1195,7 +1237,8 @@ namespace SbgShields
                 if (rb != null) { rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
                 _setKnockOutState.Invoke(mv, new object[] { KnockoutState.None });
                 AirHold.Released(mv, "teched");
-                Plugin.Log.LogInfo($"TECH: pressed {pressLead * 1000.0:0} ms before landing; up instantly, {Plugin.TechImmunity.Value:0.00}s bubble.");
+                TechRootUntil = Time.timeAsDouble + Mathf.Max(0f, Plugin.TechRecovery.Value);
+                Plugin.Log.LogInfo($"TECH: pressed {pressLead * 1000.0:0} ms before landing; up instantly, rooted {Plugin.TechRecovery.Value:0.00}s, {Plugin.TechImmunity.Value:0.00}s bubble.");
             }
             catch (Exception e) { Plugin.Log.LogWarning("Tech failed: " + e.Message); }
             finally { _techRecovery = false; }   // StartKnockoutImmunity fires synchronously inside the call above
