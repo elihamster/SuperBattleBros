@@ -319,9 +319,9 @@ namespace SbgShields
             ShieldAbsorbsHits = Config.Bind("Shield", "ShieldAbsorbsHits", true,
                 "Master switch for the pip economy. Off = vanilla shield behaviour (blocks everything, never breaks).");
             MaxPips = Config.Bind("Shield", "MaxPips", 10,
-                "Bubble HP. Drawn as five circles of two pips each, so a 1-pip hit takes half a circle. Stray ball 1, pistol 2, " +
-                "homing ball 2, elephant gun 3, explosions and carts 3, swings break it outright, the penalty stroke goes straight " +
-                "through. No regeneration.");
+                "Bubble HP. Drawn as five circles of two pips each, so a 1-pip hit takes half a circle. Stray ball 1, guns 2, " +
+                "homing ball 2, explosions and carts 3, swings break it outright, the penalty stroke goes straight through. " +
+                "No regeneration.");
             UseCooldown = Config.Bind("Shield", "UseCooldown", 1.0f,
                 "Seconds after releasing the shield before it can be raised again. Anti-flicker.");
             BreakCooldown = Config.Bind("Shield", "BreakCooldown", 10.0f,

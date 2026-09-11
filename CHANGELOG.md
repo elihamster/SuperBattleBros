@@ -2,7 +2,7 @@
 
 ## 0.7.23 (test build)
 
-- Costs are in half-circles again: stray ball 1, pistol 2, homing ball 2, elephant gun 3, explosions and carts 3. They had been doubled along with the pip count, so a rocket took three whole circles. Percent per pip doubled to match, so a hit is worth the same percent as before.
+- Costs are in half-circles again: stray ball 1, guns 2, homing ball 2, explosions and carts 3. They had been doubled along with the pip count, so a rocket took three whole circles. Percent per pip doubled to match, so a hit is worth the same percent as before.
 - The penalty stroke goes straight through the bubble: no pips, no parry, no break, an ordinary hit. `Costs.Overrides` accepts `bypass` for any other type.
 - Guns and balls actually cost pips now. The shooter's machine (guns) and the host (balls) were reflecting off the shield *flag* regardless of the bubble being a trigger, so a held bubble bounced both for free and the pip costs never applied.
 - The bubble is no longer a body: mines, blasts, the laser and the thunderstorm measure their distance to you, not to the bubble's edge. A held bubble used to pop a mine from a metre away and made you a bigger target for the laser and lightning it can't stop.

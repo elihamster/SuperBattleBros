@@ -14,7 +14,7 @@ Hold **Left Shift** to raise a bubble. It absorbs hits, costs pips, and breaks i
 
 **Pips.** Ten, drawn as five circles under the icon: a 1-pip hit takes half a circle. The bubble itself dims as pips go and flashes white on each one lost, on everyone's screen, so an attacker can see it weaken. It blinks when it's down to its last circle. No regeneration.
 
-**What a hit costs, in half-circles.** Stray ball 1, pistol 2, homing ball 2, elephant gun 3, explosions and carts 3, golf swing breaks it outright. A freeze bomb costs nothing: everyone else in range still freezes, you don't. Explosions still go off against everyone else nearby; the bubble only spares its holder. The penalty stroke (your own ball dropped on your head after going out of bounds) ignores the bubble entirely: it can't be absorbed or parried. Costs are editable per hit type in the config.
+**What a hit costs, in half-circles.** Stray ball 1, guns 2, homing ball 2, explosions and carts 3, golf swing breaks it outright. A freeze bomb costs nothing: everyone else in range still freezes, you don't. Explosions still go off against everyone else nearby; the bubble only spares its holder. The penalty stroke (your own ball dropped on your head after going out of bounds) ignores the bubble entirely: it can't be absorbed or parried. Costs are editable per hit type in the config.
 
 **Nothing bounces off a held bubble.** Balls, rockets and bombs pass in and cost pips; gun shots land the same way. The bubble is not a body either: a mine, a blast, a laser or a lightning strike measures its distance to you, not to the bubble's edge. Rooted while it's up by default — no moving, jumping, swinging or items.
 

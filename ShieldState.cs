@@ -329,8 +329,8 @@ namespace SbgShields
             switch (type)
             {
                 // Ten pips, drawn as five circles of two. A cost of 1 is HALF a circle.
-                //   stray ball 1 (half a circle)   homing ball 2 (one circle)   pistol 2
-                //   elephant gun 3                 explosions, carts 3 (a circle and a half)
+                //   stray ball 1 (half a circle)   homing ball 2 (one circle)   guns 2
+                //   explosions, carts 3 (a circle and a half)
                 //   swing = full break             freeze bomb 0
                 // These were doubled along with the pip count in 0.7.16 and a rocket took
                 // three whole circles; the user's numbers were always in halves.
@@ -341,14 +341,13 @@ namespace SbgShields
                 case KnockoutType.ReturnedBall:
                     return CostBypass;
 
-                // Guns. The pistol is the game's weakest gun, the elephant gun its hardest
-                // ordinary hit (60 m/s against a swing's 30), so they are not priced alike.
+                // Guns: one circle each (user, 11 Sep 2026). The elephant gun hits harder
+                // (60 m/s against the pistol's 30) but that shows up as percent, not pips.
                 case KnockoutType.DuelingPistol:
                 case KnockoutType.DeflectedDuelingPistolShot:
-                    return 2;
                 case KnockoutType.ElephantGun:
                 case KnockoutType.DeflectedElephantGunShot:
-                    return 3;
+                    return 2;
 
                 // Balls: a homing ball is a bigger hit than a stray one, but it is still a
                 // ball. It used to be a full break, which meant any locked-on ball popped
