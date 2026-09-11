@@ -163,6 +163,23 @@ namespace SbgShields
         /// <summary>The skin colour pushed over 1: the tint pipeline scales by intensity, so this reads as a bright pop of the same colour, not white.</summary>
         internal static Color Hot(Color skin) => new Color(skin.r * 1.4f, skin.g * 1.4f, skin.b * 1.4f, 1f);
 
+        /// <summary>
+        /// The colour this player's bubble is being DRAWN right now, flash and blink
+        /// included: what anything that wants to match the bubble (the halo) should use.
+        /// </summary>
+        internal static Color CurrentColour(PlayerInfo p)
+        {
+            if (p == null) return Color.white;
+            if (_flashUntil != double.MinValue && ReferenceEquals(_flashOn, p))
+            {
+                var c = Skin.Of(p);
+                float b = Mathf.Max(1f, Plugin.ParryGlowBoost.Value);
+                return new Color(c.r * b, c.g * b, c.b * b, 1f);
+            }
+            if (Local.Is(p) && _warnActive && _warnDim) return Hot(Skin.Of(p));
+            return BubbleColour(p);
+        }
+
         /// <summary>Re-tint any active bubble whose state changed since the last frame.</summary>
         private static void TickBubbleState()
         {
@@ -416,6 +433,7 @@ namespace SbgShields
             TickParryFlash();   // before the early-out: a flash can be pending with nothing instanced yet
             TickPipWarning();
             TickBubbleState();
+            BubbleHalo.Tick();  // after the colour decisions above, so the halo matches this frame's bubble
             if (_instances.Count == 0) return;
 
             double now = Time.timeAsDouble;
@@ -465,6 +483,7 @@ namespace SbgShields
             _armed = null;
             _lastFraction.Clear(); _crackUntil.Clear(); _lastApplied.Clear();
             BubbleMaterialTintPatch.DestroyAll();
+            BubbleHalo.DestroyAll();
         }
 
         private static void Dump(Transform root, string why)
@@ -597,7 +616,9 @@ namespace SbgShields
                 if (sh.GetPropertyType(i) != UnityEngine.Rendering.ShaderPropertyType.Color) continue;
                 string prop = sh.GetPropertyName(i);
                 var oc = m.GetColor(prop);
-                float intensity = Mathf.Max(oc.maxColorComponent, 1f);
+                // The material's own intensity (these are HDR colours) times BubbleGlow: past
+                // white-point the game's bloom picks the bubble up as a glow.
+                float intensity = Mathf.Max(oc.maxColorComponent, 1f) * Mathf.Max(0.1f, Plugin.BubbleGlow.Value);
                 m.SetColor(prop, new Color(c.r * intensity, c.g * intensity, c.b * intensity, oc.a * c.a));
             }
         }

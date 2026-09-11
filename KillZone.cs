@@ -205,8 +205,8 @@ namespace SbgShields
 
             if (_starTex == null) _starTex = MakeStarTexture(128);
             if (_dotTex  == null) _dotTex  = MakeDotTexture(32);
-            if (_flashMat == null) _flashMat = LaunchVfx.MakeUnlitMaterial(_starTex, additive: true);
-            if (_sparkMat == null) _sparkMat = LaunchVfx.MakeUnlitMaterial(_dotTex,  additive: true);
+            if (_flashMat == null) _flashMat = LaunchVfx.MakeUnlitMaterial(_starTex, additive: true, intensity: Plugin.BitsGlow.Value);
+            if (_sparkMat == null) _sparkMat = LaunchVfx.MakeUnlitMaterial(_dotTex,  additive: true, intensity: Plugin.BitsGlow.Value);
             if (_flashMat == null) return;
 
             _flashGo = new GameObject("SbgKillFlash");

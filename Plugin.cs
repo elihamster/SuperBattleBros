@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.23";
+        public const string Version = "0.7.24";
 
         internal static ManualLogSource Log;
 
@@ -186,6 +186,11 @@ namespace SbgShields
         internal static ConfigEntry<bool>  BubbleReflects;
         internal static ConfigEntry<float> BubbleWornWhiteness;
         internal static ConfigEntry<float> BubbleWornAlpha;
+        internal static ConfigEntry<float> BubbleGlow;
+        internal static ConfigEntry<bool>  BubbleHalo;
+        internal static ConfigEntry<float> BubbleHaloSize;
+        internal static ConfigEntry<float> BubbleHaloStrength;
+        internal static ConfigEntry<float> BitsGlow;
 
         // Immunity look (the game's comeback shield)
         internal static ConfigEntry<bool>  ImmunityFlickerEnabled;
@@ -322,9 +327,9 @@ namespace SbgShields
                 "Bubble HP. Drawn as five circles of two pips each, so a 1-pip hit takes half a circle. Stray ball 1, guns 2, " +
                 "homing ball 2, explosions and carts 3, swings break it outright, the penalty stroke goes straight through. " +
                 "No regeneration.");
-            UseCooldown = Config.Bind("Shield", "UseCooldown", 1.0f,
-                "Seconds after releasing the shield before it can be raised again. Anti-flicker.");
-            BreakCooldown = Config.Bind("Shield", "BreakCooldown", 10.0f,
+            UseCooldown = Config.Bind("Shield", "UseCooldown", 3.0f,
+                "Seconds after releasing the shield before it can be raised again. Every raise is a commitment; a parry refunds it.");
+            BreakCooldown = Config.Bind("Shield", "BreakCooldown", 15.0f,
                 "Seconds the bubble is unavailable after it breaks. With the bounce being mild, this and the boom are the punish.");
             RestoreAfterBreakCooldown = Config.Bind("Shield", "RestoreAfterBreakCooldown", true,
                 "When the break cooldown ends, restore the shield to full pips. Off = no shield until the next hole.");
@@ -661,6 +666,17 @@ namespace SbgShields
             BubbleWornAlpha = Config.Bind("Bubble", "BubbleWornAlpha", 0.4f,
                 "How opaque the bubble is with almost nothing left, as a fraction of full (1 = no change). It thins as pips go, on " +
                 "every screen, so an attacker can see it weaken.");
+            BubbleGlow = Config.Bind("Bubble", "BubbleGlow", 1.5f,
+                "How much brighter than its plain skin colour the bubble is drawn (1 = as the game draws it). Above 1 the colour is " +
+                "pushed past white-point, which the game's bloom turns into a glow. Applies to the sparks it throws too.");
+            BubbleHalo = Config.Bind("Bubble", "BubbleHalo", true,
+                "A soft ring of the bubble's colour drawn around it, on every screen, so it glows even where there is no bloom. " +
+                "Follows the bubble's state: thins as pips go, flares on a parry and the last-circle blink.");
+            BubbleHaloSize = Config.Bind("Bubble", "BubbleHaloSize", 1.6f, "Halo width as a multiple of the bubble's diameter.");
+            BubbleHaloStrength = Config.Bind("Bubble", "BubbleHaloStrength", 0.7f, "Halo brightness, 0..2.");
+            BitsGlow = Config.Bind("Bubble", "BitsGlow", 1.6f,
+                "Brightness of the mod's own particles (parry ring and sparks, star flash, rage embers, the halo) past white-point, " +
+                "for bloom. Read when each effect is first built; restart the game to change it.");
             BubbleReflects = Config.Bind("Bubble", "BubbleReflects", false,
                 "Off: a held bubble absorbs. Balls, rockets and bombs pass into you and cost pips; nothing bounces back. " +
                 "On: the game's own behaviour, where every shield is a wall that reflects whatever touches it. " +
@@ -785,6 +801,8 @@ namespace SbgShields
             // 0.7.23: costs halved back to the user's numbers (a rocket is a circle and a half); per-pip percent 2 -> 4
             // so a hit is worth the same. Parry flash 0.35 -> 0.45 now that the body stays for it.
             "Percent.PercentPerPip", "Parry.ParryGlowDuration",
+            // 0.7.24: use cooldown 1 -> 3, break cooldown 10 -> 15 (user). Glow entries are new keys.
+            "Shield.UseCooldown", "Shield.BreakCooldown",
         };
 
         private void ResetConfigIfVersionChanged()

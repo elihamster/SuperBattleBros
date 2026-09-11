@@ -46,8 +46,12 @@ namespace SbgShields
             return _shader;
         }
 
-        /// <summary>Transparent unlit particle material around a texture. additive = glow blend.</summary>
-        internal static Material MakeUnlitMaterial(Texture2D tex, bool additive)
+        /// <summary>
+        /// Transparent unlit particle material around a texture. additive = glow blend.
+        /// intensity > 1 pushes the base colour past white-point (HDR) so bloom, where the
+        /// game has it, turns the particles into a glow; without bloom they are just brighter.
+        /// </summary>
+        internal static Material MakeUnlitMaterial(Texture2D tex, bool additive, float intensity = 1f)
         {
             var sh = FindShader();
             if (sh == null) return null;
@@ -64,8 +68,10 @@ namespace SbgShields
             mat.renderQueue = (int)RenderQueue.Transparent;
             if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", tex);
             else mat.mainTexture = tex;
-            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", Color.white);
-            else mat.color = Color.white;
+            var baseColor = new Color(intensity, intensity, intensity, 1f);
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", baseColor);
+            else mat.color = baseColor;
+            if (mat.HasProperty("_Cull")) mat.SetInt("_Cull", (int)CullMode.Off);   // billboards drawn from either side
             return mat;
         }
 
@@ -340,7 +346,7 @@ namespace SbgShields
             try
             {
                 if (_emberTex == null) _emberTex = MakeEmberTexture(32);
-                if (_rageMat == null) _rageMat = MakeUnlitMaterial(_emberTex, additive: true);
+                if (_rageMat == null) _rageMat = MakeUnlitMaterial(_emberTex, additive: true, intensity: Plugin.BitsGlow.Value);
                 if (_rageMat == null) return null;
 
                 var _rageGo = new GameObject("SbgRageEmbers");

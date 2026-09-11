@@ -69,8 +69,8 @@ namespace SbgShields
 
             if (_ringTex == null) _ringTex = MakeRingTexture(128);
             if (_dotTex == null)  _dotTex  = MakeDotTexture(32);
-            if (_ringMat == null) _ringMat  = LaunchVfx.MakeUnlitMaterial(_ringTex, additive: true);
-            if (_sparkMat == null) _sparkMat = LaunchVfx.MakeUnlitMaterial(_dotTex, additive: true);
+            if (_ringMat == null) _ringMat  = LaunchVfx.MakeUnlitMaterial(_ringTex, additive: true, intensity: Plugin.BitsGlow.Value);
+            if (_sparkMat == null) _sparkMat = LaunchVfx.MakeUnlitMaterial(_dotTex, additive: true, intensity: Plugin.BitsGlow.Value);
             if (_ringMat == null) return;
 
             _go = new GameObject("SbgParryBurst");

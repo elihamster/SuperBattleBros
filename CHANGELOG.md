@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.24 (test build)
+
+- The bubble glows. Its colour is pushed past white-point (`Bubble.BubbleGlow` 1.5) so the game's bloom lights it up, and a soft halo of the same colour is drawn around it on every screen (`Bubble.BubbleHalo`), thinning with the pips and flaring with a parry or the last-circle blink. The mod's own particles (parry ring and sparks, star flash, embers) are pushed the same way (`Bubble.BitsGlow`).
+- Use cooldown 1 s to 3 s, break cooldown 10 s to 15 s.
+- The load log says whether bloom is on, so the glow numbers can be tuned against what the game actually renders.
+
 ## 0.7.23 (test build)
 
 - Costs are in half-circles again: stray ball 1, guns 2, homing ball 2, explosions and carts 3. They had been doubled along with the pip count, so a rocket took three whole circles. Percent per pip doubled to match, so a hit is worth the same percent as before.
