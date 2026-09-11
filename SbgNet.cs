@@ -185,10 +185,9 @@ namespace SbgShields
 
         private static void RemoteParryFeedback(PlayerInfo p)
         {
-            // What the person who just got parried hears: the game's own blocked-hit sting, where it happened.
-            if (!Plugin.PerfectParrySound.Value) return;
-            try { FMODUnity.RuntimeManager.PlayOneShot(GameManager.AudioSettings.KnockoutImmunityBlockedKnockoutEvent, p.transform.position); }
-            catch { }
+            // Another player's parry: the same flash, burst, sound and kick they saw, at their bubble.
+            try { ParryFx.Play(p); }
+            catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Remote parry effects: " + e.Message); }
         }
 
         private static PlayerInfo FindPlayer(uint netId)

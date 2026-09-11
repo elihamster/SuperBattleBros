@@ -123,7 +123,16 @@ namespace SbgShields
         {
             if (v == null) { sb.AppendLine($"{indent}{name} = null"); return; }
             var t = v.GetType();
-            if (t.IsPrimitive || t.IsEnum || v is string || v is Vector2 || v is Vector3 || v is Vector4 || v is Color || v is Quaternion || v is LayerMask)
+            if (v is LayerMask lm)
+            {
+                // The struct's ToString is just its type name. Print the bits and the layer names.
+                var names = new StringBuilder();
+                for (int i = 0; i < 32; i++)
+                    if ((lm.value & (1 << i)) != 0) names.Append(names.Length > 0 ? ", " : "").Append(i).Append(':').Append(LayerMask.LayerToName(i));
+                sb.AppendLine($"{indent}{name} = 0x{lm.value:X8} [{names}]");
+                return;
+            }
+            if (t.IsPrimitive || t.IsEnum || v is string || v is Vector2 || v is Vector3 || v is Vector4 || v is Color || v is Quaternion)
             {
                 sb.AppendLine($"{indent}{name} = {v}");
                 return;

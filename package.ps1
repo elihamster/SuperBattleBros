@@ -32,6 +32,8 @@ $manifest = Get-Content thunderstore\manifest.json -Raw | ConvertFrom-Json
 $manifest.version_number = $ver
 $manifest | ConvertTo-Json -Depth 5 | Set-Content "$stage\manifest.json" -Encoding UTF8
 Copy-Item README.md, CHANGELOG.md, thunderstore\icon.png, $dll $stage
+# Sound files the mod plays itself (parry). r2modman keeps the folder next to the DLL.
+if (Test-Path sounds) { Copy-Item sounds "$stage\sounds" -Recurse }
 
 New-Item -ItemType Directory -Force dist | Out-Null
 $zip = "dist\SuperBattleBros-$ver.zip"

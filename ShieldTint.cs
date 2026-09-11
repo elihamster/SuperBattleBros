@@ -177,7 +177,8 @@ namespace SbgShields
             try
             {
                 if (!p.IsElectromagnetShieldActive) { _lastApplied.Remove(p); return; }
-                if (Local.Is(p) && (_flashUntil != double.MinValue || _warnActive)) return;   // parry flash / pip blink own the colour right now
+                if (_flashUntil != double.MinValue && ReferenceEquals(_flashOn, p)) return;   // the parry flash owns this bubble's colour right now (ours or a remote's)
+                if (Local.Is(p) && _warnActive) return;                                        // the pip blink owns ours
                 var col = p.ElectromagnetShieldCollider;
                 if (col == null) return;
                 var c = BubbleColour(p);
@@ -197,9 +198,10 @@ namespace SbgShields
 
         /// <summary>
         /// Blow the shield's colour out bright for a moment. Only visible while the
-        /// shield still has a body, which during a parry is what ParryLinger is for.
-        /// Local: the tint pipeline is client-side, so other players see the game's own
-        /// shield-hit effect rather than this.
+        /// shield still has a body, which during a parry is what ParryLinger is for
+        /// (ParryFx extends it to cover the flash). Runs on every client for the
+        /// parrier's bubble: ours from ResolveKnockout, a remote's from the SbgNet
+        /// Parry message.
         /// </summary>
         internal static void ParryFlash(PlayerInfo p)
         {

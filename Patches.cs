@@ -769,7 +769,9 @@ namespace SbgShields
             {
                 var col = __instance.ElectromagnetShieldCollider;
                 if (col == null) return;
-                bool trigger = __instance.IsElectromagnetShieldActive && !Plugin.BubbleReflects.Value;
+                // Standing down (public lobby, mismatch) means vanilla: the magnet item's
+                // shield must stay a wall here too, or this machine alone lets things through.
+                bool trigger = __instance.IsElectromagnetShieldActive && !Plugin.BubbleReflects.Value && ModHandshake.GameplayEnabled;
                 if (col.isTrigger != trigger) col.isTrigger = trigger;
             }
             catch { }

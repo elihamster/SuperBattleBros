@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.23 (test build)
+
+- Costs are in half-circles again: stray ball 1, pistol 2, homing ball 2, elephant gun 3, explosions and carts 3. They had been doubled along with the pip count, so a rocket took three whole circles. Percent per pip doubled to match, so a hit is worth the same percent as before.
+- The penalty stroke goes straight through the bubble: no pips, no parry, no break, an ordinary hit. `Costs.Overrides` accepts `bypass` for any other type.
+- Guns and balls actually cost pips now. The shooter's machine (guns) and the host (balls) were reflecting off the shield *flag* regardless of the bubble being a trigger, so a held bubble bounced both for free and the pip costs never applied.
+- The bubble is no longer a body: mines, blasts, the laser and the thunderstorm measure their distance to you, not to the bubble's edge. A held bubble used to pop a mine from a metre away and made you a bigger target for the laser and lightning it can't stop.
+- A hit that arrives during the 0.3 s cosmetic linger now actually lands. The game's own shield check was refusing it, which made every release a free block.
+- A parry is a moment now, on every screen: the bubble flares and stays for it, a ring of your colour bursts out with sparks, a sound plays at the bubble, and nearby cameras kick. Drop a `parry.wav` next to the DLL (or in `sounds\`) to use your own sound; without one the game's blocked-hit sting plays. `Parry.ParrySoundFile`, `ParryBurst`, `ParryShake`.
+- In a public lobby or a mismatched one the magnet item's shield stays a wall, as vanilla has it.
+- Dev build: the settings dump prints layer masks as bits and layer names.
+
 ## 0.7.22 (test build)
 
 - A worn bubble gets thinner, not darker and not white: it keeps its colour, fades toward 40% opacity at one pip, and lightens only a little. The hot flash on a lost pip is gentler. `Bubble.BubbleWornAlpha`, `BubbleWornWhiteness`.

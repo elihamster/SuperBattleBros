@@ -16,6 +16,8 @@ namespace SbgShields
         // Sentinel costs. Positive ints are chip costs in pips.
         internal const int CostFullBreak   = 1000;
         internal const int CostUnblockable = -1;
+        /// <summary>The bubble is not consulted: no pips, no parry, no break. The hit lands as if there were no bubble.</summary>
+        internal const int CostBypass      = -2;
 
         // ---- Live state -----------------------------------------------------
 
@@ -312,6 +314,7 @@ namespace SbgShields
                 int cost;
                 if (v == "full" || v == "break") cost = CostFullBreak;
                 else if (v == "unblockable") cost = CostUnblockable;
+                else if (v == "bypass" || v == "through") cost = CostBypass;
                 else if (!int.TryParse(v, out cost) || cost < 0) { Plugin.Log.LogWarning($"Bad cost '{kv[1]}' for {kt}"); continue; }
                 _overrides[kt] = cost;
             }
@@ -325,21 +328,27 @@ namespace SbgShields
 
             switch (type)
             {
-                // Ten pips, drawn as five circles of two. A cost of 1 is half a circle.
-                //   stray ball 2 (one circle)   homing ball 4      pistol 3 (a circle and a half)
-                //   elephant gun 5              explosions, carts 6 (three circles)
-                //   swing = full break          freeze bomb 0
+                // Ten pips, drawn as five circles of two. A cost of 1 is HALF a circle.
+                //   stray ball 1 (half a circle)   homing ball 2 (one circle)   pistol 2
+                //   elephant gun 3                 explosions, carts 3 (a circle and a half)
+                //   swing = full break             freeze bomb 0
+                // These were doubled along with the pip count in 0.7.16 and a rocket took
+                // three whole circles; the user's numbers were always in halves.
+
+                // The penalty stroke (your own ball dropped on your head after going out
+                // of bounds) is a penalty, not an attack: it goes through the bubble as if
+                // it were not there. No pips, no parry, no break.
                 case KnockoutType.ReturnedBall:
-                    return 2;
+                    return CostBypass;
 
                 // Guns. The pistol is the game's weakest gun, the elephant gun its hardest
                 // ordinary hit (60 m/s against a swing's 30), so they are not priced alike.
                 case KnockoutType.DuelingPistol:
                 case KnockoutType.DeflectedDuelingPistolShot:
-                    return 3;
+                    return 2;
                 case KnockoutType.ElephantGun:
                 case KnockoutType.DeflectedElephantGunShot:
-                    return 5;
+                    return 3;
 
                 // Balls: a homing ball is a bigger hit than a stray one, but it is still a
                 // ball. It used to be a full break, which meant any locked-on ball popped
@@ -347,7 +356,7 @@ namespace SbgShields
                 case KnockoutType.SwingProjectile:
                 case KnockoutType.ReflectedSwingProjectile:
                 case KnockoutType.RocketDriverSwingProjectile:
-                    return projectileTargeted ? 4 : 2;
+                    return projectileTargeted ? 2 : 1;
 
                 // Free. A freeze bomb still freezes everyone else in range; the bubble's
                 // holder is spared, and that is the whole reward.
@@ -355,8 +364,8 @@ namespace SbgShields
                 case KnockoutType.ReflectedFreezeBomb:
                     return 0;
 
-                // Three circles: explosions (the blast still happens, against everyone
-                // else nearby) and the heavy kinetic hits.
+                // A circle and a half: explosions (the blast still happens, against
+                // everyone else nearby) and the heavy kinetic hits.
                 case KnockoutType.Rocket:
                 case KnockoutType.ReflectedRocket:
                 case KnockoutType.Landmine:
@@ -368,7 +377,7 @@ namespace SbgShields
                 case KnockoutType.TrafficVehicle:
                 case KnockoutType.RocketDriverSwing:
                 case KnockoutType.RocketDriverSwingPostHitSpin:
-                    return 6;
+                    return 3;
 
                 // Unblockable: the shield drops and you eat the hit.
                 case KnockoutType.OrbitalLaserDirectHit:
@@ -594,6 +603,7 @@ namespace SbgShields
             if (!Plugin.PerfectParry.Value) return false;
             if (Time.timeAsDouble > _parryArmedUntil) return false;
             if (swingClass ? !_parrySwing : !_parryProjectile) return false;
+            if (cost == CostBypass)      return false;   // a penalty is not a hit you can read
             if (cost == CostUnblockable) return Plugin.PerfectParryBeatsUnblockable.Value;
             if (cost == CostFullBreak)   return Plugin.PerfectParryBeatsFullBreak.Value;
             return true;
@@ -604,22 +614,14 @@ namespace SbgShields
             LastParryAt = Time.timeAsDouble;
             _parryArmedUntil = double.MinValue;   // one release, one parry
             if (Plugin.PerfectParryRefundsUse.Value) UseCooldownUntil = double.MinValue;
-            ShieldTint.ParryFlash(player);
-
-            if (Plugin.PerfectParrySound.Value)
-            {
-                // The game's own "your immunity refused that knockout" sting. Already
-                // means "that hit did not land", which is exactly the read we want.
-                try { RuntimeManager.PlayOneShot(GameManager.AudioSettings.KnockoutImmunityBlockedKnockoutEvent, player.transform.position); }
-                catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Parry sound: " + e.Message); }
-            }
+            ParryFx.Play(player);   // flash, burst, sound, shake -- the same thing everyone else sees over SbgNet
 
             Plugin.Log.LogInfo($"PERFECT PARRY on {what} ({(Time.timeAsDouble - LoweredAt) * 1000.0:0} ms after release; armed by {_parryThreat}; would have cost {CostLabel(cost)}). {Pips} pips kept.");
-            SbgNet.Send(SbgNet.Kind.Parry, 0f);   // so the attacker hears it too
+            SbgNet.Send(SbgNet.Kind.Parry, 0f);   // so everyone else sees and hears it too
         }
 
         private static string CostLabel(int cost) =>
-            cost == CostFullBreak ? "a break" : cost == CostUnblockable ? "an unblockable" : cost + " pips";
+            cost == CostFullBreak ? "a break" : cost == CostUnblockable ? "an unblockable" : cost == CostBypass ? "nothing (bypasses the bubble)" : cost + " pips";
 
         internal static float GetPercentGain(int cost) => GetPercentGain(cost, null, -1f);
 
@@ -644,6 +646,7 @@ namespace SbgShields
             float baseGain;
             if (cost == CostUnblockable)    baseGain = Plugin.PercentPerUnblockableHit.Value;
             else if (cost == CostFullBreak) baseGain = Plugin.PercentPerFullBreakHit.Value;
+            else if (cost == CostBypass)    baseGain = Plugin.PercentPerHitBase.Value;   // an ordinary hit with no pip part
             else                            baseGain = Plugin.PercentPerHitBase.Value + Plugin.PercentPerPip.Value * cost;
 
             if (Plugin.PercentScalesWithSpeed.Value && speed >= 0f)
@@ -731,10 +734,18 @@ namespace SbgShields
                 return true;
             }
 
+            // Bypass (the penalty stroke): the bubble is not part of this hit at all.
+            // If it is up, it just goes away -- no pop, no break, no cooldown -- and the
+            // hit lands on the body like any other. Above the parry on purpose.
+            if (cost == CostBypass)
+            {
+                if (player.IsElectromagnetShieldActive) Plugin.DropShieldQuietly($"{type} goes through the bubble");
+                if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"{type} bypasses the bubble: ordinary hit.");
+            }
             // Perfect parry. Checked here, ABOVE the shielded branch, because the whole
             // point is that the shield is already down by the time the hit arrives --
             // inside that branch it could never fire.
-            if (IsPerfectParry(cost, IsSwingClass(type)))
+            else if (IsPerfectParry(cost, IsSwingClass(type)))
             {
                 Parry(player, type.ToString(), cost);
                 PendingVelocityCorrection    = -incomingVelocityChange;
@@ -744,6 +755,12 @@ namespace SbgShields
 
             // A lingering body (ParryLinger, after the key is up) is drawn but stops
             // nothing: the release is the commitment. Only the parry can save you now.
+            // The game does not know that: its own CanBeKnockedOutBy refuses every
+            // ordinary hit while the shield flag is up, so the body has to actually go
+            // before the hit can land, or the linger is a free block after every release.
+            if (player.IsElectromagnetShieldActive && Plugin.ShieldLingering)
+                Plugin.DropShieldQuietly($"{type} arrived during the linger");
+
             if (player.IsElectromagnetShieldActive && Plugin.ShieldAbsorbsHits.Value && !Plugin.ShieldLingering)
             {
                 LastKnockoutChargeTime = Time.timeAsDouble;
@@ -1067,7 +1084,7 @@ namespace SbgShields
         internal static void ChargeReflection(PlayerInfo player, int cost, string what)
         {
             if (!player.IsElectromagnetShieldActive || !Plugin.WeActivated || !Plugin.ShieldAbsorbsHits.Value) return;
-            if (cost == CostUnblockable) return;
+            if (cost == CostUnblockable || cost == CostBypass) return;
 
             // A reflection never reaches TryKnockOut, so the parry check in
             // ResolveKnockout never sees it. Without this, timing a shield onto a rocket

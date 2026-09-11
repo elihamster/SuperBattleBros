@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.22";
+        public const string Version = "0.7.23";
 
         internal static ManualLogSource Log;
 
@@ -58,10 +58,15 @@ namespace SbgShields
         internal static ConfigEntry<bool>  PerfectParryBeatsUnblockable;
         internal static ConfigEntry<bool>  PerfectParryRefundsUse;
         internal static ConfigEntry<bool>  PerfectParrySound;
+        internal static ConfigEntry<string> ParrySoundFile;
+        internal static ConfigEntry<float> ParrySoundVolume;
         internal static ConfigEntry<float> ParryLinger;
         internal static ConfigEntry<bool>  ParryGlow;
         internal static ConfigEntry<float> ParryGlowDuration;
         internal static ConfigEntry<float> ParryGlowBoost;
+        internal static ConfigEntry<bool>  ParryBurst;
+        internal static ConfigEntry<float> ParryBurstSize;
+        internal static ConfigEntry<bool>  ParryShake;
 
         internal static ConfigEntry<float> PercentForMaxScaling;
         internal static ConfigEntry<float> ForceMultiplierAtMax;
@@ -221,6 +226,21 @@ namespace SbgShields
         private Harmony _harmony;
         private static Plugin _instance;
 
+        /// <summary>Where the DLL lives (the r2modman package folder). Sound files ship next to it.</summary>
+        internal static string PluginDirectory
+        {
+            get
+            {
+                try
+                {
+                    string loc = _instance?.Info?.Location;
+                    if (!string.IsNullOrEmpty(loc)) return System.IO.Path.GetDirectoryName(loc);
+                }
+                catch { }
+                try { return System.IO.Path.GetDirectoryName(typeof(Plugin).Assembly.Location); } catch { return null; }
+            }
+        }
+
         /// <summary>The plugin is a MonoBehaviour; lend that to static helpers that need a coroutine.</summary>
         internal static void RunCoroutine(IEnumerator routine)
         {
@@ -269,6 +289,7 @@ namespace SbgShields
             _instance = this;
             _harmony = new Harmony(Guid);
             _harmony.PatchAll();
+            ShieldFlagPatches.ApplyAll(_harmony);   // by hand: each target degrades to a warning if the game renamed it
 
             ShieldState.Pips = MaxPips.Value;
             Hud.Init();
@@ -298,8 +319,9 @@ namespace SbgShields
             ShieldAbsorbsHits = Config.Bind("Shield", "ShieldAbsorbsHits", true,
                 "Master switch for the pip economy. Off = vanilla shield behaviour (blocks everything, never breaks).");
             MaxPips = Config.Bind("Shield", "MaxPips", 10,
-                "Bubble HP. Drawn as five circles of two pips each, so a 1-pip hit takes half a circle. Balls 2, pistol 3, " +
-                "homing ball 4, elephant gun 5, explosions and carts 6, swings break it outright. No regeneration.");
+                "Bubble HP. Drawn as five circles of two pips each, so a 1-pip hit takes half a circle. Stray ball 1, pistol 2, " +
+                "homing ball 2, elephant gun 3, explosions and carts 3, swings break it outright, the penalty stroke goes straight " +
+                "through. No regeneration.");
             UseCooldown = Config.Bind("Shield", "UseCooldown", 1.0f,
                 "Seconds after releasing the shield before it can be raised again. Anti-flicker.");
             BreakCooldown = Config.Bind("Shield", "BreakCooldown", 10.0f,
@@ -377,7 +399,17 @@ namespace SbgShields
             PerfectParryRefundsUse = Config.Bind("Parry", "PerfectParryRefundsUse", true,
                 "Clear the use cooldown on a parry, so reading a hit correctly does not cost you the next shield.");
             PerfectParrySound = Config.Bind("Parry", "PerfectParrySound", true,
-                "Play the game's own blocked-knockout sound on a parry, over the normal shield hit.");
+                "Play a sound when a parry lands, heard by everyone near it: ParrySoundFile if it exists, otherwise the game's own " +
+                "blocked-knockout sting.");
+            ParrySoundFile = Config.Bind("Parry", "ParrySoundFile", "parry.wav",
+                "Sound file for a parry, looked for in the mod's folder and its sounds\\ subfolder (wav, ogg or mp3). " +
+                "Missing file = the game's sting. Everyone hears their own copy, so it should ship with the mod.");
+            ParrySoundVolume = Config.Bind("Parry", "ParrySoundVolume", 1f, "Volume of ParrySoundFile, 0..2.");
+            ParryBurst = Config.Bind("Parry", "ParryBurst", true,
+                "A ring of light and sparks bursts out of the bubble when a parry lands, in the parrier's colour, on every screen.");
+            ParryBurstSize = Config.Bind("Parry", "ParryBurstSize", 5f, "How wide the parry ring grows, in metres.");
+            ParryShake = Config.Bind("Parry", "ParryShake", true,
+                "A short camera kick for anyone close to a parry, so it lands like a hit rather than a fizzle.");
 
             ParryLinger = Config.Bind("Parry", "ParryLinger", 0.3f,
                 "Seconds the bubble is still DRAWN after you let go, so a tap shows its intro before the dissolve instead of " +
@@ -386,7 +418,8 @@ namespace SbgShields
                 "the key is up. 0 = the bubble vanishes with the keypress.");
             ParryGlow = Config.Bind("Parry", "ParryGlow", true,
                 "Flash the shield bright when a parry lands.");
-            ParryGlowDuration = Config.Bind("Parry", "ParryGlowDuration", 0.35f, "How long the parry flash lasts, in seconds.");
+            ParryGlowDuration = Config.Bind("Parry", "ParryGlowDuration", 0.45f,
+                "How long the parry flash lasts, in seconds. The bubble's body is kept drawn for this long after a parry so the flash is seen.");
             ParryGlowBoost = Config.Bind("Parry", "ParryGlowBoost", 3f,
                 "How much brighter the flash is than your normal shield colour. The tint pipeline scales by the material's own " +
                 "intensity, so this multiplies rather than washing out to white.");
@@ -407,8 +440,8 @@ namespace SbgShields
                 "longer stun the more beaten up you are, which reads as being juggled. Set 1.0 for vanilla stun at every percent.");
             PercentPerHitBase = Config.Bind("Percent", "PercentPerHitBase", 5f,
                 "Percent gained by any chip-class hit, before the per-pip part.");
-            PercentPerPip = Config.Bind("Percent", "PercentPerPip", 2f,
-                "Extra percent per pip of the hit's cost (a 6-pip rocket = base + 6*this). Halved when pips went 5 -> 10, so the percent is unchanged.");
+            PercentPerPip = Config.Bind("Percent", "PercentPerPip", 4f,
+                "Extra percent per pip of the hit's cost (a 3-pip rocket = base + 3*this). Costs are in half-circles; a rocket is 5 + 12 = 17%.");
             PercentPerFullBreakHit = Config.Bind("Percent", "PercentPerFullBreakHit", 25f,
                 "Percent gained from a full-break-class hit landing unshielded.");
             ExplosionPercentFalloff = Config.Bind("Percent", "ExplosionPercentFalloff", true,
@@ -749,6 +782,9 @@ namespace SbgShields
             "Parry.ParryLinger",
             // 0.7.22: worn bubbles thin instead of whitening; whiteness 0.75 -> 0.3.
             "Bubble.BubbleWornWhiteness",
+            // 0.7.23: costs halved back to the user's numbers (a rocket is a circle and a half); per-pip percent 2 -> 4
+            // so a hit is worth the same. Parry flash 0.35 -> 0.45 now that the body stays for it.
+            "Percent.PercentPerPip", "Parry.ParryGlowDuration",
         };
 
         private void ResetConfigIfVersionChanged()
@@ -781,6 +817,7 @@ namespace SbgShields
             try { ShieldTint.DestroyAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { LaunchVfx.DestroyAll(); }  catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { KillZone.DestroyAll(); }   catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
+            try { ParryFx.DestroyAll(); }    catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { ImmunityFlicker.ClearAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { BubbleColliderPatch.RestoreAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { SbgNet.Shutdown(); }           catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
@@ -1018,6 +1055,32 @@ namespace SbgShields
             }
 
             CancelLingeringShield("released");
+        }
+
+        /// <summary>
+        /// The bubble simply goes away, held or lingering: no pop, no break, no cooldown,
+        /// no parry arming. For hits that are not the bubble's business (the penalty
+        /// stroke) and for a hit that lands during the linger, where the game's own
+        /// shield check would otherwise refuse it.
+        /// </summary>
+        internal static void DropShieldQuietly(string why)
+        {
+            _weActivated = false;
+            CancelLingeringShield(why);
+        }
+
+        /// <summary>
+        /// Keep the lingering body drawn a little longer (a parry just lit it up). Only
+        /// ever extends a linger that is already running or begins one for a body the
+        /// key has let go of; it never holds a bubble that is actually up.
+        /// </summary>
+        internal static void ExtendLinger(float seconds)
+        {
+            if (_weActivated || seconds <= 0f) return;
+            var player = GameManager.LocalPlayerInfo;
+            if (player == null || !player.IsElectromagnetShieldActive) return;
+            double until = Time.timeAsDouble + seconds;
+            if (until > _lingerUntil) _lingerUntil = until;
         }
 
         /// <summary>Ends the linger: the actual cancel the keypress deferred.</summary>

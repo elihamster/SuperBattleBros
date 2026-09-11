@@ -14,13 +14,13 @@ Hold **Left Shift** to raise a bubble. It absorbs hits, costs pips, and breaks i
 
 **Pips.** Ten, drawn as five circles under the icon: a 1-pip hit takes half a circle. The bubble itself dims as pips go and flashes white on each one lost, on everyone's screen, so an attacker can see it weaken. It blinks when it's down to its last circle. No regeneration.
 
-**What a hit costs.** Stray ball 2, pistol 3, homing ball 4, elephant gun 5, explosions and carts 6, golf swing breaks it outright. A freeze bomb costs nothing: everyone else in range still freezes, you don't. Explosions still go off against everyone else nearby; the bubble only spares its holder. Costs are editable per hit type in the config.
+**What a hit costs, in half-circles.** Stray ball 1, pistol 2, homing ball 2, elephant gun 3, explosions and carts 3, golf swing breaks it outright. A freeze bomb costs nothing: everyone else in range still freezes, you don't. Explosions still go off against everyone else nearby; the bubble only spares its holder. The penalty stroke (your own ball dropped on your head after going out of bounds) ignores the bubble entirely: it can't be absorbed or parried. Costs are editable per hit type in the config.
 
-**Nothing bounces off a held bubble.** Balls, rockets and bombs pass in and cost pips; gun shots land the same way. Rooted while it's up by default — no moving, jumping, swinging or items.
+**Nothing bounces off a held bubble.** Balls, rockets and bombs pass in and cost pips; gun shots land the same way. The bubble is not a body either: a mine, a blast, a laser or a lightning strike measures its distance to you, not to the bubble's edge. Rooted while it's up by default — no moving, jumping, swinging or items.
 
 **Break.** A hit that breaks the bubble is cancelled; you pop straight up, tumble, land, and get up. Everyone nearby hears it, and the bubble is gone for 10 seconds. That cooldown is the real cost.
 
-**Parry.** Let go of the bubble with a threat coming — anything that would reach you within about a third of a second, or a golfer winding up next to you — and the next hit from it is absorbed for free: no pips, no percent, and it stops a swing that would normally break the bubble. Letting go with nothing coming arms nothing, so it cannot be fished for. Someone aiming a gun along a line through your bubble counts too (experimental). The player you parried hears it.
+**Parry.** Let go of the bubble with a threat coming — anything that would reach you within about a third of a second, or a golfer winding up next to you — and the next hit from it is absorbed for free: no pips, no percent, and it stops a swing that would normally break the bubble. Letting go with nothing coming arms nothing, so it cannot be fished for. Someone aiming a gun along a line through your bubble counts too (experimental). Everyone sees and hears it: the bubble flares, a ring of your colour bursts out of it, and nearby cameras kick.
 
 ## The percent layer
 
