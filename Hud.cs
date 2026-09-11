@@ -13,6 +13,7 @@ namespace SbgShields
         private static bool      _fontSearched;
         private static Texture2D _bubbleTex;
         private static Texture2D _dotTex;
+        private static Texture2D _glowTex;
         private static GUIStyle  _percentStyle;
         private static GUIStyle  _timerStyle;
         private static GUIStyle  _labelStyle;
@@ -36,6 +37,7 @@ namespace SbgShields
             if (_panelTex  != null) { UnityEngine.Object.Destroy(_panelTex);  _panelTex  = null; }
             if (_bubbleTex != null) { UnityEngine.Object.Destroy(_bubbleTex); _bubbleTex = null; }
             if (_dotTex    != null) { UnityEngine.Object.Destroy(_dotTex);    _dotTex    = null; }
+            if (_glowTex   != null) { UnityEngine.Object.Destroy(_glowTex);   _glowTex   = null; }
             _percentStyle = null;
             _fontSearched = false;
             _cachedPct = int.MinValue;
@@ -78,6 +80,7 @@ namespace SbgShields
 
             if (_bubbleTex == null) _bubbleTex = MakeBubbleTexture(128);
             if (_dotTex == null)    _dotTex    = MakeDotTexture(24);
+            if (_glowTex == null)   _glowTex   = MakeGlowTexture(96);
 
             if (_percentStyle == null)
             {
@@ -167,6 +170,43 @@ namespace SbgShields
             tex.SetPixels(px);
             tex.Apply();
             return tex;
+        }
+
+        /// <summary>A soft radial glow: dense at the centre, gone at the edge. Drawn under the icon and the pips in the skin colour.</summary>
+        private static Texture2D MakeGlowTexture(int size)
+        {
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            float r = size * 0.5f;
+            var px = new Color[size * size];
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(r, r)) / r;
+                float a = d >= 1f ? 0f : Mathf.Exp(-d * d * 3.5f) * Mathf.Clamp01((1f - d) / 0.15f);
+                px[y * size + x] = new Color(1f, 1f, 1f, a);
+            }
+            tex.SetPixels(px);
+            tex.Apply();
+            return tex;
+        }
+
+        /// <summary>
+        /// Two layers of the glow texture centred on a rect: a wide faint one and a
+        /// tighter bright one, which reads as light rather than a coloured disc.
+        /// IMGUI has no additive blend, so the colour is the skin and the strength is alpha.
+        /// </summary>
+        private static void DrawGlow(Rect around, Color colour, float strength, float spread)
+        {
+            if (strength <= 0.005f || _glowTex == null) return;
+            var prev = GUI.color;
+            float cx = around.center.x, cy = around.center.y;
+            float wide = Mathf.Max(around.width, around.height) * spread;
+            float tight = wide * 0.62f;
+            GUI.color = new Color(colour.r, colour.g, colour.b, Mathf.Clamp01(strength * 0.45f));
+            GUI.DrawTexture(new Rect(cx - wide * 0.5f, cy - wide * 0.5f, wide, wide), _glowTex, ScaleMode.StretchToFill, true);
+            GUI.color = new Color(colour.r, colour.g, colour.b, Mathf.Clamp01(strength * 0.7f));
+            GUI.DrawTexture(new Rect(cx - tight * 0.5f, cy - tight * 0.5f, tight, tight), _glowTex, ScaleMode.StretchToFill, true);
+            GUI.color = prev;
         }
 
         // ---- Drawing ---------------------------------------------------------
@@ -479,6 +519,29 @@ namespace SbgShields
                 tint.a = 1f;
             }
 
+            // Glow under the icon, in the skin colour. Breathes while the bubble is up,
+            // flares white for a moment after a parry, and all but goes out on cooldown.
+            float glow = Mathf.Max(0f, Plugin.HudGlow.Value);
+            double nowG = Time.timeAsDouble;
+            float parryT = (float)((nowG - ShieldState.LastParryAt) / 0.45);
+            bool parrying = parryT >= 0f && parryT < 1f;
+            Color glowColour = skin;
+            float glowStrength, glowSpread = 1.9f;
+            if (parrying)
+            {
+                glowColour = Color.Lerp(Color.white, skin, parryT);
+                glowStrength = glow * Mathf.Lerp(1.4f, 0.9f, parryT);
+                glowSpread = Mathf.Lerp(2.6f, 1.9f, parryT);
+            }
+            else if (up)
+            {
+                float breathe = 0.5f + 0.5f * Mathf.Sin((float)(nowG * 4.5));
+                glowStrength = glow * Mathf.Lerp(0.75f, 1.0f, breathe);
+                glowSpread = Mathf.Lerp(1.9f, 2.15f, breathe);
+            }
+            else glowStrength = glow * (ready ? 0.55f : 0.12f);
+            DrawGlow(rect, glowColour, glowStrength, glowSpread);
+
             var prev = GUI.color;
             GUI.color = tint;
             GUI.DrawTexture(rect, _bubbleTex, ScaleMode.ScaleToFit, true);
@@ -517,6 +580,11 @@ namespace SbgShields
 
                 float cx = dx + i * (dot + dgap) + dot * 0.5f, cy = dy + dot * 0.5f;
                 var r = new Rect(cx - d * 0.5f, cy - d * 0.5f, d, d);
+
+                // Each circle that still has something in it glows too: a half circle
+                // glows half as hard, a circle that just lost a pip flares white.
+                if (have > 0)
+                    DrawGlow(r, lost ? Color.white : skin, glow * (lost ? 1.2f : have == 2 ? 0.6f : 0.3f) * (up ? 1.15f : 1f), 2.6f);
 
                 GUI.color = new Color(0f, 0f, 0f, 0.55f);
                 GUI.DrawTexture(r, _dotTex, ScaleMode.ScaleToFit, true);

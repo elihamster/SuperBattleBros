@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.24";
+        public const string Version = "0.7.25";
 
         internal static ManualLogSource Log;
 
@@ -207,6 +207,7 @@ namespace SbgShields
         internal static ConfigEntry<float>  BubbleHudSize;
         internal static ConfigEntry<float>  BubbleHudGap;
         internal static ConfigEntry<bool>   BubbleHudOnLeft;
+        internal static ConfigEntry<float>  HudGlow;
         internal static ConfigEntry<bool>   ShowPipDots;
         internal static ConfigEntry<string> ConfigVersion;
         internal static ConfigEntry<string> PercentFontName;
@@ -701,6 +702,9 @@ namespace SbgShields
             BubbleHudGap = Config.Bind("HUD", "BubbleHudGap", 22f, "Gap between the percent and the icon.");
             BubbleHudOnLeft = Config.Bind("HUD", "BubbleHudOnLeft", true, "Icon left of the percent (away from the item bar). Off = right of it.");
             ShowPipDots = Config.Bind("HUD", "ShowPipDots", true, "Show pip dots under the icon. Debug aid; the shield itself should carry this in the final build.");
+            HudGlow = Config.Bind("HUD", "HudGlow", 1.0f,
+                "Glow behind the bubble icon and the pip circles, in your skin colour: soft when the bubble is ready, breathing while " +
+                "it is up, a white flare on a parry, and almost nothing on cooldown. 0 = off, 2 = twice as strong.");
             PercentFontName = Config.Bind("HUD", "PercentFontName", "DFGothic-EB",
                 "OS-installed font to use for the percent. Matched loosely (spaces/dashes ignored). " +
                 "Unity can only load fonts installed on the system, so install DF Gothic first. Falls back to the default font.");

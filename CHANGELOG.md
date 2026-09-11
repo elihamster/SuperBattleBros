@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.25 (test build)
+
+- The HUD glows: a soft light in your skin colour behind the bubble icon and behind every pip circle that still has something in it. Soft when the bubble is ready, breathing while it is up, a white flare on a parry and on a circle that just lost a pip, nearly out on cooldown. `HUD.HudGlow` (0 = off).
+
 ## 0.7.24 (test build)
 
 - The bubble glows. Its colour is pushed past white-point (`Bubble.BubbleGlow` 1.5) so the game's bloom lights it up, and a soft halo of the same colour is drawn around it on every screen (`Bubble.BubbleHalo`), thinning with the pips and flaring with a parry or the last-circle blink. The mod's own particles (parry ring and sparks, star flash, embers) are pushed the same way (`Bubble.BitsGlow`).
