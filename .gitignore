@@ -9,3 +9,6 @@ dist/
 
 # Decompiled game assemblies (ilspycmd). Reference only; the game's code is not ours to publish.
 decomp/
+
+# Working agreements for Claude Code: local only, shipped in the -priv zip, not on the public repo.
+CLAUDE.md
