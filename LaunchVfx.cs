@@ -75,9 +75,33 @@ namespace SbgShields
             return mat;
         }
 
+        /// <summary>
+        /// When the local player's current launch last qualified as a big one: tumbling,
+        /// at or above LaunchTrailMinPercent (or dead), moving at LaunchTrailStartSpeed
+        /// or more. This is the smoke trail's own rule, and teching hangs off it too
+        /// (TechNeedsBigLaunch): a hit worth teching is a hit that smokes. Tracked even
+        /// with the trail visual off, so turning off the smoke does not turn off teching.
+        /// </summary>
+        internal static double LocalBigLaunchAt = double.MinValue;
+
+        private static void TrackLocalBigLaunch()
+        {
+            try
+            {
+                var local = GameManager.LocalPlayerInfo;
+                var mv = local != null ? local.Movement : null;
+                if (mv == null || !mv.IsKnockedOutOrRecovering || mv.IsGrounded) return;
+                if (LocalBigLaunchAt >= mv.IsKnockedOutTimestamp) return;   // already counted for this knockout
+                bool percentOk = !Plugin.PercentEnabled.Value || ShieldState.Percent >= Plugin.LaunchTrailMinPercent.Value || KillZone.IsArmed;
+                if (percentOk && mv.Velocity.magnitude >= Plugin.LaunchTrailStartSpeed.Value) LocalBigLaunchAt = Time.timeAsDouble;
+            }
+            catch { }
+        }
+
         internal static void Tick()
         {
             RageTick();
+            TrackLocalBigLaunch();
 
             if (!Plugin.LaunchTrail.Value)
             {

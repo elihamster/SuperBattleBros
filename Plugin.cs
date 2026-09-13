@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.29";
+        public const string Version = "0.7.30";
 
         internal static ManualLogSource Log;
 
@@ -135,6 +135,7 @@ namespace SbgShields
         internal static ConfigEntry<float> TechLockout;
         internal static ConfigEntry<float> TechRecovery;
         internal static ConfigEntry<bool>  TechSelfInflicted;
+        internal static ConfigEntry<bool>  TechNeedsBigLaunch;
         // Percent by speed
         internal static ConfigEntry<bool>  PercentScalesWithSpeed;
         internal static ConfigEntry<float> PercentReferenceSpeed;
@@ -574,6 +575,9 @@ namespace SbgShields
                 "off your own rocket was a free dash.");
             TechSelfInflicted = Config.Bind("Launch", "TechSelfInflicted", false,
                 "Whether a knockout you caused yourself (own rocket, own back-blast) can be teched. Off: you eat the landing you bought.");
+            TechNeedsBigLaunch = Config.Bind("Launch", "TechNeedsBigLaunch", true,
+                "Only a launch big enough to leave a smoke trail can be teched: at least LaunchTrailStartSpeed while tumbling, at " +
+                "LaunchTrailMinPercent or above. A small shove is a stun you sit through. Off: any launch can be teched.");
             RecoveryImmunity = Config.Bind("Launch", "RecoveryImmunity", 1f,
                 "Seconds of the game's blue comeback shield after you get up from a launch. The game's own rule is 3 s (a match " +
                 "setting), tuned for a game where the hit itself cost 3 s; with the flight as the stun that is far too generous and " +

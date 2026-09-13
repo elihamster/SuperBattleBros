@@ -30,7 +30,7 @@ Hold **Left Shift** to raise a bubble. It absorbs hits, costs pips, and breaks i
 
 **DI.** As you're launched, push toward where on the screen you want to drift and the launch bends that way, up to 20°. Where you land, not how far.
 
-**Teching.** Press the bubble key just before your tumbling body hits the ground and you're up instantly, no lie-down. One press is one attempt, a missed one locks the key out briefly, and a tech roots you for a moment before you can act. A launch you caused yourself, or a break, can't be teched.
+**Teching.** Press the bubble key just before your tumbling body hits the ground and you're up instantly, no lie-down. One press is one attempt, a missed one locks the key out briefly, and a tech roots you for a moment before you can act. Only a launch big enough to smoke can be teched: a small shove is a stun you sit through. A launch you caused yourself, or a break, can't be teched either.
 
 **Invulnerability look.** While the game's comeback shield is up, the body flickers washed-out white, Smash-style, on every client. Past 100% embers rise off you, redder toward the kill line.
 

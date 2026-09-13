@@ -1238,11 +1238,18 @@ namespace SbgShields
             _landedAt = now;
             if (KillZone.IsArmed) return;          // dead: the star is coming, nothing to get up for
 
+            bool pressed = now - _shieldPressAt <= Mathf.Max(0.02f, Plugin.TechWindow.Value);
+            // Only a launch big enough to smoke can be teched: the same rule as the trail
+            // (speed and percent). A small shove is a stun you sit through; the tech is
+            // the reward for reading a real hit. User's rule, 13 Sep 2026.
+            bool bigEnough = !Plugin.TechNeedsBigLaunch.Value || LaunchVfx.LocalBigLaunchAt >= mv.IsKnockedOutTimestamp;
             bool tech = Plugin.TechEnabled.Value
                         && !CurrentKnockoutIsBreak   // the break bounce is the one stun you sit through
                         && (Plugin.TechSelfInflicted.Value || !CurrentKnockoutSelfInflicted)   // no free movement tech off your own rocket
-                        && now - _shieldPressAt <= Mathf.Max(0.02f, Plugin.TechWindow.Value);
+                        && pressed && bigEnough;
             if (tech) { _techPending = true; return; }
+            if (pressed && !bigEnough && Plugin.TechEnabled.Value && !CurrentKnockoutIsBreak)
+                Plugin.Log.LogInfo($"TECH refused: launch too small to tech (no smoke trail; needs {Plugin.LaunchTrailStartSpeed.Value:0} m/s at {Plugin.LaunchTrailMinPercent.Value:0}%+, you were at {Percent:0}%).");
 
             // No tech: the flight WAS the stun. Start the get-up shortly after touchdown
             // instead of lying there for whatever is left of the game's own timer (3 s

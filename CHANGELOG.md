@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.30 (test build)
+
+- Only a launch big enough to leave a smoke trail can be teched (fast enough while tumbling, at 75% or above). A small shove is a stun you sit through; the tech is the reward for reading a real hit. `Launch.TechNeedsBigLaunch`. A refused press logs why.
+
 ## 0.7.29 (test build)
 
 - Tech window 0.2 s to 0.3 s, to leave room for latency: the landing is judged on your machine against a body the host is moving.
