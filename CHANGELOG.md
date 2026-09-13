@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.28 (test build)
+
+- DI window 0.15 s to 0.2 s. Still a read you commit to before the hit lands, just a touch more forgiving.
+
 ## 0.7.27 (test build)
 
 - No bubble during the victory dance. Scoring puts you in the dance and Shift does nothing until it ends; a bubble that was up when you scored drops. Read from the game's own reaction state, not the emote, so a mod that lets you keep playing after scoring gets the bubble back the moment the game says you are playing again.

@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.27";
+        public const string Version = "0.7.28";
 
         internal static ManualLogSource Log;
 
@@ -548,7 +548,9 @@ namespace SbgShields
                 "way, by up to DIMaxYaw. W is into the screen, S toward the camera, A and D screen left and right: the same " +
                 "camera-relative stick you walk with. Speed and height are unchanged, so it is where you land, not how far. " +
                 "Read once, from the first input inside DIWindow.");
-            DIWindow = Config.Bind("Launch", "DIWindow", 0.15f, "Seconds after the hit during which your stick is read for DI.");
+            DIWindow = Config.Bind("Launch", "DIWindow", 0.2f,
+                "Seconds after the hit during which your stick is read for DI. Short on purpose: the direction you are already " +
+                "holding when the hit lands is your DI; it is a read you commit to, not steering during the flight.");
             DIMaxYaw = Config.Bind("Launch", "DIMaxYaw", 20f, "Degrees the launch can be turned toward the stick, at full stick.");
 
             TechEnabled = Config.Bind("Launch", "TechEnabled", true,
@@ -807,6 +809,8 @@ namespace SbgShields
             "Percent.PercentPerPip", "Parry.ParryGlowDuration",
             // 0.7.24: use cooldown 1 -> 3, break cooldown 10 -> 15 (user). Glow entries are new keys.
             "Shield.UseCooldown", "Shield.BreakCooldown",
+            // 0.7.28: DI window 0.15 -> 0.2 (user).
+            "Launch.DIWindow",
         };
 
         private void ResetConfigIfVersionChanged()
