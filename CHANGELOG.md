@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.31 (test build)
+
+- Handshake, again, and this time against the actual cause: while a client loads a course Mirror marks it "not ready" and silently drops chat both ways, so the host's announces never arrived and the client's own announces never left even though both logged as sent. Now a client never counts an announce while it is not ready, and everyone keeps re-announcing every 3.5 s after a scene change until every player present has said hello back, within the timeout window. Fixes "Hamster does not have SBG Shields installed" at the first tee-off.
+
 ## 0.7.30 (test build)
 
 - Only a launch big enough to leave a smoke trail can be teched (fast enough while tumbling, at 75% or above). A small shove is a stun you sit through; the tech is the reward for reading a real hit. `Launch.TechNeedsBigLaunch`. A refused press logs why.

@@ -33,8 +33,9 @@ namespace SbgShields
             public double FirstSeen;
             public bool   Announced;
             public bool   Warned;
-            public bool   Nudged;         // we re-announced once because they stayed silent
-            public bool   RepeatReplied;  // we answered one repeat announce from them since our last reset
+            public bool   Nudged;          // we re-announced once because they stayed silent
+            public bool   RepeatReplied;   // we answered one repeat announce from them since our last reset
+            public bool   HelloSinceReset; // they have announced since OUR last reset: they are loaded and ready
         }
 
         private static readonly Dictionary<ulong, Peer> _peers = new Dictionary<ulong, Peer>();
@@ -43,20 +44,27 @@ namespace SbgShields
         private static readonly List<ulong> _gone = new List<ulong>();
         private static readonly List<ulong> _forget = new List<ulong>();
 
-        // The 3s minimum interval IS the rate limit. There is no message ceiling: a long
-        // session with people cycling in and out would hit any fixed cap, and the mod
-        // would then stop handshaking without saying so.
-        private const double MinAnnounceInterval = 3.0;
+        // The minimum interval IS the rate limit. The game's server drops chat past 5
+        // messages in 10 s per player; 3.5 s spacing keeps us at 3. There is no message
+        // ceiling: a long session with people cycling in and out would hit any fixed
+        // cap, and the mod would then stop handshaking without saying so.
+        private const double MinAnnounceInterval = 3.5;
 
         private static double _lastAnnounce = double.MinValue;
         private static double _nextAnnounceDue = double.MaxValue;   // set by Reset()
         private static bool   _announcePending = true;
-        // A second, unconditional announce a few seconds after the first. Every scene
-        // change resets everyone, and a client that loads slower than the host has no
-        // chat manager yet when the host's first line goes out. The line is lost and the
-        // client times the host out ("Hamster does not have SBG Shields installed").
-        private static double _secondAnnounceDue = double.MaxValue;
-        private static bool   _secondAnnouncePending;
+        private static double _resetAt = double.MinValue;
+        private static bool   _warnedNotReady;
+
+        // WHY WE KEEP TALKING. Every scene change resets everyone, and while a client is
+        // loading a course Mirror marks it "not ready" and silently drops traffic both
+        // ways: RPCs the host sends to it (our announce never arrives) and commands it
+        // sends (its own announce never leaves, though the call "succeeds"). A fixed
+        // announce at +1.5 s and +5 s reached nobody on a slow load, and the client timed
+        // the host out at the first tee-off ("Hamster does not have SBG Shields
+        // installed", 0.7.26-0.7.30). So: a client never counts a send while not ready,
+        // and everyone re-announces every few seconds after a reset until every player
+        // present has said hello since that reset, bounded by the timeout window.
         // Starts CLOSED. The mod does not run until something has affirmatively said
         // the lobby is private and the peers check out. Failing open would mean a
         // future game update that breaks the lobby-mode read silently re-enables the
@@ -112,14 +120,13 @@ namespace SbgShields
             foreach (var kv in _peers)
                 if (!kv.Value.Announced) _forget.Add(kv.Key);
             foreach (var g in _forget) _peers.Remove(g);
-            foreach (var kv in _peers) kv.Value.RepeatReplied = false;   // one reply per peer per reset
+            foreach (var kv in _peers) { kv.Value.RepeatReplied = false; kv.Value.HelloSinceReset = false; }   // one reply per peer per reset; everyone owes a hello
             _gateOpen = false;
             _evaluatedOnce = false;
             _blockReason = null;
             _announcePending = true;
+            _resetAt = Time.timeAsDouble;
             _nextAnnounceDue = Time.timeAsDouble + 1.5; // let the lobby settle before talking
-            _secondAnnouncePending = true;
-            _secondAnnounceDue = Time.timeAsDouble + 5.0;
             if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Handshake reset ({why}).");
         }
 
@@ -141,6 +148,19 @@ namespace SbgShields
         {
             double now = Time.timeAsDouble;
             if (now - _lastAnnounce < MinAnnounceInterval) return false;
+
+            // A client that is not ready (still loading the course) can call the chat
+            // command all it likes; Mirror drops it. Do not count it, try again later.
+            try
+            {
+                if (!Mirror.NetworkServer.active && Mirror.NetworkClient.active && !Mirror.NetworkClient.ready)
+                {
+                    if (!_warnedNotReady) { _warnedNotReady = true; Plugin.Log.LogInfo("Handshake: client not ready yet (loading); announce deferred."); }
+                    return false;
+                }
+            }
+            catch { }
+            _warnedNotReady = false;
 
             string msg = Token + "/" + Plugin.Version;
             if (!ChatBypass.Send(msg)) return false;
@@ -191,6 +211,7 @@ namespace SbgShields
             }
             p.Version = version;
             p.Announced = true;
+            p.HelloSinceReset = true;
 
             Plugin.Log.LogInfo($"{NameOf(sender)} is running SBG Shields {version}.");
             if (isNewPeer)
@@ -241,12 +262,16 @@ namespace SbgShields
             if (_announcePending && now >= _nextAnnounceDue)
             {
                 if (Announce()) _announcePending = false;
-                else _nextAnnounceDue = now + 1.0;   // retry until there is a chat manager
+                else _nextAnnounceDue = now + 1.0;   // retry until there is a chat manager / the client is ready
             }
-            else if (_secondAnnouncePending && now >= _secondAnnounceDue)
+            else if (!_announcePending && now - _resetAt < Mathf.Max(2f, Plugin.HandshakeTimeout.Value) + MinAnnounceInterval
+                     && now - _lastAnnounce >= MinAnnounceInterval && AnyoneOwesHello())
             {
-                if (Announce()) _secondAnnouncePending = false;
-                else _secondAnnounceDue = now + 1.0;
+                // Somebody present has not said hello since our reset, so they may still
+                // have been loading when our last line went out. Say it again, at the
+                // rate limit, until they do or the timeout window closes.
+                _announcePending = true;
+                _nextAnnounceDue = now;
             }
 
             // Track who is here, so we can time out anyone who never says hello.
@@ -285,6 +310,24 @@ namespace SbgShields
             }
 
             Evaluate();
+        }
+
+        /// <summary>True if any player present has not announced since our last reset.</summary>
+        private static bool AnyoneOwesHello()
+        {
+            try
+            {
+                var r = GameManager.RemotePlayers;
+                if (r == null) return false;
+                foreach (var p in r)
+                {
+                    ulong g = GuidOf(p);
+                    if (g == 0UL) continue;
+                    if (!_peers.TryGetValue(g, out var peer) || !peer.HelloSinceReset) return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         /// <summary>
