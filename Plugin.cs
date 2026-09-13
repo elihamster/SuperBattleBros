@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.26";
+        public const string Version = "0.7.27";
 
         internal static ManualLogSource Log;
 
@@ -914,8 +914,8 @@ namespace SbgShields
                 ReleaseShield();
             }
 
-            // Climbing into a cart, springing, or a new hole's countdown starting with the shield up drops it.
-            if (_weActivated && (IsInGolfCart(player) || InTeeOffCountdown() ||
+            // Climbing into a cart, springing, scoring (the dance), or a new hole's countdown starting with the shield up drops it.
+            if (_weActivated && (IsInGolfCart(player) || InTeeOffCountdown() || InVictoryDance(player) ||
                 (BlockActivationDuringSpringBoots.Value && IsUsingSpringBoots(player))))
                 ReleaseShield();
 
@@ -971,6 +971,7 @@ namespace SbgShields
             }
             if (InTeeOffCountdown()) { why = "tee-off countdown"; return true; }
             if (KillZone.IsLingering) { why = "dead"; return true; }
+            if (InVictoryDance(player)) { why = "victory dance"; return true; }
             if (IsInGolfCart(player)) { why = "in a cart"; return true; }
             var movement = player.Movement;
             if (movement != null)
@@ -1017,6 +1018,23 @@ namespace SbgShields
         internal static bool HasKnockoutImmunity(PlayerInfo player)
         {
             try { return player != null && player.Movement != null && player.Movement.KnockoutImmunityStatus.hasImmunity; }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// The dance after scoring. Read from the golfer's match-resolution REACTION,
+        /// which the game sets to Victory when your resolution is Scored (or your team
+        /// won) and which starts the dance animation; the emote menu's dance does not
+        /// set it. A mod that lets a scored player keep playing puts the resolution back,
+        /// the reaction follows, and the bubble comes back with it.
+        /// </summary>
+        internal static bool InVictoryDance(PlayerInfo player)
+        {
+            try
+            {
+                var golfer = player.AsGolfer;
+                return golfer != null && golfer.CurrentMatchResolutionReaction == MatchResolutionReaction.Victory;
+            }
             catch { return false; }
         }
 

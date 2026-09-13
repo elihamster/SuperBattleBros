@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.27 (test build)
+
+- No bubble during the victory dance. Scoring puts you in the dance and Shift does nothing until it ends; a bubble that was up when you scored drops. Read from the game's own reaction state, not the emote, so a mod that lets you keep playing after scoring gets the bubble back the moment the game says you are playing again.
+
 ## 0.7.26 (test build)
 
 - Handshake: the host announces again after every scene change. The lobby reads as public for a moment while a course loads, and that moment was wiping the host's pending announce, so every client timed the host out at the first tee-off ("Hamster does not have SBG Shields installed"), and again on the way back to the range. Each player now also announces a second time five seconds after a reset, and answers a repeat announce once, so a client that loads slower than the host still hears it.
