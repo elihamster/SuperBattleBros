@@ -1,4 +1,7 @@
-# Builds the DLL and zips a Thunderstore package into dist\.
+# Builds the DLL and zips TWO packages into dist\:
+#   SuperBattleBros-<ver>.zip        the public one, for Thunderstore: exactly what players install
+#   SuperBattleBros-<ver>-priv.zip   the same plus the working documents (CLAUDE.md, the handoffs),
+#                                    for the developer's own records; never uploaded
 #
 #   .\package.ps1                     # DevDebug: the TEST build, what ships while testing
 #   .\package.ps1 -Configuration Release
@@ -43,3 +46,16 @@ Compress-Archive -Path "$stage\*" -DestinationPath $zip
 Write-Host ""
 Write-Host "Packaged $zip (version $ver, $Configuration build):"
 Get-ChildItem $stage | Select-Object Name, Length | Out-Host
+
+# The private zip: the public package plus the working documents.
+$priv = "dist\SuperBattleBros-$ver-priv.zip"
+if (Test-Path $priv) { Remove-Item $priv }
+$docs = @(Get-ChildItem -Path . -Filter 'SBG-Shields-Handoff-*.md' | ForEach-Object { $_.FullName })
+if (Test-Path CLAUDE.md) { $docs += (Resolve-Path CLAUDE.md).Path }
+$docsDir = "$stage-priv"
+if (Test-Path $docsDir) { Remove-Item $docsDir -Recurse -Force }
+New-Item -ItemType Directory -Force "$docsDir\docs" | Out-Null
+Copy-Item "$stage\*" $docsDir -Recurse
+foreach ($d in $docs) { Copy-Item $d "$docsDir\docs" }
+Compress-Archive -Path "$docsDir\*" -DestinationPath $priv
+Write-Host "Packaged $priv (private: + docs\ $(($docs | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))"

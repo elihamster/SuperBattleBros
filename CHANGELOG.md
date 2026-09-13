@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.29 (test build)
+
+- Tech window 0.2 s to 0.3 s, to leave room for latency: the landing is judged on your machine against a body the host is moving.
+- A star KO is heard across the whole hole (`Percent.KillZoneBoomCarry`, 400 m), the same way a bubble break carries, not just within the game's own falloff.
+
 ## 0.7.28 (test build)
 
 - DI window 0.15 s to 0.2 s. Still a read you commit to before the hit lands, just a touch more forgiving.

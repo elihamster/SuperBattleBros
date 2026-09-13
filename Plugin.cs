@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.28";
+        public const string Version = "0.7.29";
 
         internal static ManualLogSource Log;
 
@@ -95,6 +95,7 @@ namespace SbgShields
         internal static ConfigEntry<float> KillZoneMaxRiseTime;
         internal static ConfigEntry<float> KillZoneDeathLinger;
         internal static ConfigEntry<bool>  KillZoneBoom;
+        internal static ConfigEntry<float> KillZoneBoomCarry;
 
         // Launch
         internal static ConfigEntry<bool>  ShapeLaunches;
@@ -488,6 +489,9 @@ namespace SbgShields
                 "Seconds you stay gone after the star flash before respawning. The camera holds on the spot.");
             KillZoneBoom = Config.Bind("Percent", "KillZoneBoom", true,
                 "Play the shield-explosion boom and a heavy screenshake on a star KO. Placeholder until custom SFX.");
+            KillZoneBoomCarry = Config.Bind("Percent", "KillZoneBoomCarry", 400f,
+                "Metres out to which a star KO is heard (the game's own sound fades within a few dozen). Everyone in that range " +
+                "hears the boom from the right direction. 0 = the game's sound only.");
 
             ShapeLaunches = Config.Bind("Launch", "ShapeLaunches", true,
                 "Raise the launch angle with percent and cap horizontal speed. Vertical launches stop juggling.");
@@ -557,7 +561,9 @@ namespace SbgShields
                 "Press the shield key just before your tumbling body hits the ground and you tech: up and actionable instantly, " +
                 "no lie-down, no get-up animation. The trade: a missed tech gives you the game's full comeback bubble through " +
                 "the get-up; a tech gives you only TechImmunity. Break stuns and death launches cannot be teched.");
-            TechWindow = Config.Bind("Launch", "TechWindow", 0.2f, "Seconds before landing in which the press counts.");
+            TechWindow = Config.Bind("Launch", "TechWindow", 0.3f,
+                "Seconds before landing in which the press counts. Wider than a fighting game's because the landing is judged on " +
+                "your own machine against a body the host is moving; 0.3 leaves room for the round trip.");
             TechImmunity = Config.Bind("Launch", "TechImmunity", 0.2f,
                 "Seconds of comeback bubble after a tech. 0 = none at all; you are up and fully hittable.");
             TechLockout = Config.Bind("Launch", "TechLockout", 0.4f,
@@ -811,6 +817,8 @@ namespace SbgShields
             "Shield.UseCooldown", "Shield.BreakCooldown",
             // 0.7.28: DI window 0.15 -> 0.2 (user).
             "Launch.DIWindow",
+            // 0.7.29: tech window 0.2 -> 0.3 for latency (user). KillZoneBoomCarry is a new key.
+            "Launch.TechWindow",
         };
 
         private void ResetConfigIfVersionChanged()

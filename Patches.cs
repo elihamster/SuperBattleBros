@@ -732,20 +732,31 @@ namespace SbgShields
         private static void Postfix(PlayerInfo __instance, bool isExplosion)
         {
             if (!isExplosion || __instance == null) return;
-            float carry = Plugin.BreakSoundCarry.Value;
+            Vector3 src;
+            try { src = __instance.ChestBone != null ? __instance.ChestBone.position : __instance.transform.position; } catch { return; }
+            CarryToListener(GameManager.AudioSettings.ElectromagnetShieldExplosionEvent, src, Plugin.BreakSoundCarry.Value, "Break sound carry");
+        }
+
+        /// <summary>
+        /// Re-play an event a few metres from the listener, in the direction of src, if
+        /// src is farther than that and within carry. The event's own copy at src is
+        /// left alone; this is the one the listener actually hears. Shared by the break
+        /// and the star KO.
+        /// </summary>
+        internal static void CarryToListener(FMODUnity.EventReference ev, Vector3 src, float carry, string what)
+        {
             if (carry <= Near) return;
             try
             {
                 var cam = GameManager.Camera;
                 if (cam == null) return;
                 Vector3 listener = cam.transform.position;
-                Vector3 src = __instance.ChestBone != null ? __instance.ChestBone.position : __instance.transform.position;
                 Vector3 to = src - listener;
                 float dist = to.magnitude;
                 if (dist <= Near || dist > carry) return;   // close enough to hear it as-is, or out of range
-                FMODUnity.RuntimeManager.PlayOneShot(GameManager.AudioSettings.ElectromagnetShieldExplosionEvent, listener + to / dist * Near);
+                FMODUnity.RuntimeManager.PlayOneShot(ev, listener + to / dist * Near);
             }
-            catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Break sound carry: " + e.Message); }
+            catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning(what + ": " + e.Message); }
         }
     }
 

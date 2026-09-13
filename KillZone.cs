@@ -126,6 +126,9 @@ namespace SbgShields
             {
                 try { RuntimeManager.PlayOneShot(GameManager.AudioSettings.ElectromagnetShieldExplosionEvent, pos); }
                 catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Kill boom failed: " + e.Message); }
+                // A death should be heard across the whole hole, not attenuated away by the
+                // event's own falloff: re-play it near the listener, from the right direction.
+                BreakSoundCarryPatch.CarryToListener(GameManager.AudioSettings.ElectromagnetShieldExplosionEvent, pos, Plugin.KillZoneBoomCarry.Value, "Kill boom carry");
                 try { CameraModuleController.Shake(GameManager.CameraGameplaySettings.RocketExplosionScreenshakeSettings, pos, 1.6f, 1.4f); }
                 catch { try { CameraModuleController.Shake(GameManager.CameraGameplaySettings.ElectromagnetExplosionScreenshakeSettings, pos); } catch { } }
             }
