@@ -339,7 +339,7 @@ namespace SbgShields
                         inst.Original = shared;
                         inst.Instance.CopyPropertiesFromMaterial(shared);
                     }
-                    BubbleMaterialTintPatch.TintMaterial(inst.Instance, c);
+                    BubbleMaterialTintPatch.TintMaterial(inst.Instance, c, inst.Original);   // from the original, never from our own tinted copy
                     r.sharedMaterial = inst.Instance;
                     _restored = false;
                 }
@@ -599,23 +599,31 @@ namespace SbgShields
             if (t.Color != c || t.Normal == null)
             {
                 t.Color = c;
-                if (t.Normal  != null && n  != null) { t.Normal.CopyPropertiesFromMaterial(n);   TintMaterial(t.Normal, c); }
-                if (t.Stencil != null && st != null) { t.Stencil.CopyPropertiesFromMaterial(st); TintMaterial(t.Stencil, c); }
+                if (t.Normal  != null && n  != null) { t.Normal.CopyPropertiesFromMaterial(n);   TintMaterial(t.Normal, c, n); }
+                if (t.Stencil != null && st != null) { t.Stencil.CopyPropertiesFromMaterial(st); TintMaterial(t.Stencil, c, st); }
             }
             // Apply now rather than waiting for the next Update, so frame 0 is tinted.
             var r = _renderer(h);
             if (r != null) Swap(r, t);
         }
 
-        internal static void TintMaterial(Material m, Color c)
+        /// <summary>
+        /// Tints every colour property of m to c. The material's OWN intensity is read
+        /// from source (the game's untouched material), never from m: m is our instance
+        /// and gets re-tinted every time the bubble's state changes, and reading the
+        /// already-tinted value multiplied BubbleGlow into itself on every pass, so a
+        /// spammed bubble grew brighter and brighter (0.7.24-25).
+        /// </summary>
+        internal static void TintMaterial(Material m, Color c, Material source = null)
         {
             var sh = m.shader;
+            var from = source != null && source.shader == sh ? source : m;
             int count = sh.GetPropertyCount();
             for (int i = 0; i < count; i++)
             {
                 if (sh.GetPropertyType(i) != UnityEngine.Rendering.ShaderPropertyType.Color) continue;
                 string prop = sh.GetPropertyName(i);
-                var oc = m.GetColor(prop);
+                var oc = from.GetColor(prop);
                 // The material's own intensity (these are HDR colours) times BubbleGlow: past
                 // white-point the game's bloom picks the bubble up as a glow.
                 float intensity = Mathf.Max(oc.maxColorComponent, 1f) * Mathf.Max(0.1f, Plugin.BubbleGlow.Value);

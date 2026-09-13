@@ -33,7 +33,8 @@ namespace SbgShields
             public double FirstSeen;
             public bool   Announced;
             public bool   Warned;
-            public bool   Nudged;     // we re-announced once because they stayed silent
+            public bool   Nudged;         // we re-announced once because they stayed silent
+            public bool   RepeatReplied;  // we answered one repeat announce from them since our last reset
         }
 
         private static readonly Dictionary<ulong, Peer> _peers = new Dictionary<ulong, Peer>();
@@ -50,6 +51,12 @@ namespace SbgShields
         private static double _lastAnnounce = double.MinValue;
         private static double _nextAnnounceDue = double.MaxValue;   // set by Reset()
         private static bool   _announcePending = true;
+        // A second, unconditional announce a few seconds after the first. Every scene
+        // change resets everyone, and a client that loads slower than the host has no
+        // chat manager yet when the host's first line goes out. The line is lost and the
+        // client times the host out ("Hamster does not have SBG Shields installed").
+        private static double _secondAnnounceDue = double.MaxValue;
+        private static bool   _secondAnnouncePending;
         // Starts CLOSED. The mod does not run until something has affirmatively said
         // the lobby is private and the peers check out. Failing open would mean a
         // future game update that breaks the lobby-mode read silently re-enables the
@@ -105,11 +112,14 @@ namespace SbgShields
             foreach (var kv in _peers)
                 if (!kv.Value.Announced) _forget.Add(kv.Key);
             foreach (var g in _forget) _peers.Remove(g);
+            foreach (var kv in _peers) kv.Value.RepeatReplied = false;   // one reply per peer per reset
             _gateOpen = false;
             _evaluatedOnce = false;
             _blockReason = null;
             _announcePending = true;
             _nextAnnounceDue = Time.timeAsDouble + 1.5; // let the lobby settle before talking
+            _secondAnnouncePending = true;
+            _secondAnnounceDue = Time.timeAsDouble + 5.0;
             if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Handshake reset ({why}).");
         }
 
@@ -190,6 +200,16 @@ namespace SbgShields
                 _announcePending = true;
                 _nextAnnounceDue = Time.timeAsDouble + UnityEngine.Random.Range(0.3f, 1.2f);
             }
+            else if (!p.RepeatReplied)
+            {
+                // A player we already know is announcing AGAIN: they reset (scene change)
+                // or they nudged because they never heard us. Either way they are waiting
+                // on our line, so answer once. Once per peer per reset, so two modded
+                // clients cannot ping-pong forever.
+                p.RepeatReplied = true;
+                _announcePending = true;
+                _nextAnnounceDue = Time.timeAsDouble + UnityEngine.Random.Range(0.3f, 1.2f);
+            }
             Evaluate();
             return true;
         }
@@ -201,10 +221,12 @@ namespace SbgShields
             // The lobby check comes FIRST and is not optional. Turning off the version
             // check must never silently turn off the public-lobby block as well.
             // Also: nothing to announce in a lobby we will not run in, so stay silent
-            // rather than advertising a mod to strangers.
+            // rather than advertising a mod to strangers. The pending flag is KEPT, not
+            // cleared: the lobby reads as public for a moment on every scene change, and
+            // clearing it there meant the host never announced after a match start, so
+            // every client timed the host out at the first tee-off (0.7.25 and earlier).
             if (!LobbyAllowed(out string lobbyProblem))
             {
-                _announcePending = false;
                 SetGate(false, lobbyProblem);
                 return;
             }
@@ -220,6 +242,11 @@ namespace SbgShields
             {
                 if (Announce()) _announcePending = false;
                 else _nextAnnounceDue = now + 1.0;   // retry until there is a chat manager
+            }
+            else if (_secondAnnouncePending && now >= _secondAnnounceDue)
+            {
+                if (Announce()) _secondAnnouncePending = false;
+                else _secondAnnounceDue = now + 1.0;
             }
 
             // Track who is here, so we can time out anyone who never says hello.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.26 (test build)
+
+- Handshake: the host announces again after every scene change. The lobby reads as public for a moment while a course loads, and that moment was wiping the host's pending announce, so every client timed the host out at the first tee-off ("Hamster does not have SBG Shields installed"), and again on the way back to the range. Each player now also announces a second time five seconds after a reset, and answers a repeat announce once, so a client that loads slower than the host still hears it.
+- The bubble's glow no longer compounds. Every state change re-tinted the already-tinted material, multiplying the glow into itself, so a spammed bubble got brighter and brighter and its dissolve lingered. The tint now always starts from the game's own material.
+- The log now says why a Shift press did nothing (`Shift ignored: <reason>`), including comeback immunity and the cooldowns, which the HUD's own hidden-reason line leaves out.
+
 ## 0.7.25 (test build)
 
 - The HUD glows: a soft light in your skin colour behind the bubble icon and behind every pip circle that still has something in it. Soft when the bubble is ready, breathing while it is up, a white flare on a parry and on a circle that just lost a pip, nearly out on cooldown. `HUD.HudGlow` (0 = off).

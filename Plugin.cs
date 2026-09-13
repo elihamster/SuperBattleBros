@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.25";
+        public const string Version = "0.7.26";
 
         internal static ManualLogSource Log;
 
@@ -1030,12 +1030,38 @@ namespace SbgShields
             catch { return false; }
         }
 
+        private static string _lastRefusal;
+        private static double _lastRefusalAt = double.MinValue;
+
+        /// <summary>
+        /// Always on, cheap: one line per distinct reason (and at most one every two
+        /// seconds) when Shift does nothing. "My shield stopped working" is otherwise
+        /// invisible in the log, because the HUD's own hidden-reason line deliberately
+        /// leaves out comeback immunity and the cooldowns.
+        /// </summary>
+        private static void LogRefusal(string why, PlayerInfo player)
+        {
+            double now = Time.timeAsDouble;
+            if (why == _lastRefusal && now - _lastRefusalAt < 2.0) return;
+            _lastRefusal = why; _lastRefusalAt = now;
+            string extra = "";
+            try
+            {
+                if (why == "comeback shield up" && player?.Movement != null)
+                    extra = $" (immunity: hasImmunity={player.Movement.KnockoutImmunityStatus.hasImmunity})";
+                else if (why == "no pips" || why == "break cooldown" || why == "use cooldown")
+                    extra = $" (pips={ShieldState.Pips}, ready in {ShieldState.SecondsUntilReady:0.0}s)";
+            }
+            catch { }
+            Log.LogInfo($"Shift ignored: {why}{extra}.");
+        }
+
         private void TryActivate(PlayerInfo player)
         {
             double since = Time.timeAsDouble - _lastActivationTime;
             if (since < ActivationCooldown.Value) return;
-            if (!ShieldState.CanActivate(out _)) return;
-            if (ActivationBlockedByState(player)) return;
+            if (!ShieldState.CanActivate(out string cdWhy)) { LogRefusal(cdWhy, player); return; }
+            if (ActivationBlockedByState(player, false, out string stateWhy)) { LogRefusal(stateWhy, player); return; }
 
             // Nothing validates ItemUseId for the shield path -- no hash, no Cmd.
             // It just needs to pass IsValid(): nonzero guid, non-negative index.
