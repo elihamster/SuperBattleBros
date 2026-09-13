@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.31";
+        public const string Version = "0.7.32";
 
         internal static ManualLogSource Log;
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.32 (test build)
+
+- The stand-down panel no longer flashes on every course load. It only appears once the mod has actually been standing down for a second and a half.
+
 ## 0.7.31 (test build)
 
 - Handshake, again, and this time against the actual cause: while a client loads a course Mirror marks it "not ready" and silently drops chat both ways, so the host's announces never arrived and the client's own announces never left even though both logged as sent. Now a client never counts an announce while it is not ready, and everyone keeps re-announcing every 3.5 s after a scene change until every player present has said hello back, within the timeout window. Fixes "Hamster does not have SBG Shields installed" at the first tee-off.

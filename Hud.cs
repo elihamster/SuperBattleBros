@@ -447,6 +447,13 @@ namespace SbgShields
             string why = ModHandshake.BlockReason;
             if (string.IsNullOrEmpty(why)) return;
 
+            // The gate closes for a moment on every course load (the lobby reads as public
+            // while the scene is swapping), which flashed the big panel for a frame or two
+            // where nobody could read it. Nothing is drawn until the block has lasted long
+            // enough to be a real one.
+            double blockedFor = Time.timeAsDouble - ModHandshake.BlockedSince;
+            if (blockedFor < 1.5) return;
+
             if (_noticeBig == null)
             {
                 _noticeBig = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, wordWrap = true, fontStyle = FontStyle.Bold };
@@ -460,7 +467,7 @@ namespace SbgShields
             }
 
             float scale = Plugin.HudScale.Value;
-            bool loud = Time.timeAsDouble - ModHandshake.BlockedSince < Plugin.MismatchPopupDuration.Value;
+            bool loud = blockedFor < 1.5 + Plugin.MismatchPopupDuration.Value;
 
             if (!loud)
             {
