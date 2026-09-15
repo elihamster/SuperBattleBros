@@ -591,11 +591,10 @@ namespace SbgShields
         /// Club or ball? Read off the game's own enum names, so a type added later sorts
         /// itself: anything with "Swing" in the name that is not a "...Projectile" is a club.
         /// </summary>
-        internal static bool IsSwingClass(KnockoutType t)
-        {
-            string n = t.ToString();
-            return n.IndexOf("Swing", StringComparison.Ordinal) >= 0 && n.IndexOf("Projectile", StringComparison.Ordinal) < 0;
-        }
+        internal static bool IsSwingClass(KnockoutType t) => IsSwingClassName(t.ToString());
+
+        private static bool IsSwingClassName(string n) =>
+            n.IndexOf("Swing", StringComparison.Ordinal) >= 0 && n.IndexOf("Projectile", StringComparison.Ordinal) < 0;
 
         internal static bool IsPerfectParry(int cost, bool swingClass)
         {
@@ -608,9 +607,23 @@ namespace SbgShields
             return true;
         }
 
+        /// <summary>Class of the last parried hit (club or projectile), for the coverage window.</summary>
+        private static bool _lastParrySwingClass;
+
+        /// <summary>
+        /// A hit arriving within ParryCoverWindow of a parry, of the same class, is part
+        /// of the same read: a rocket volley, a ball and the thing it knocked loose. The
+        /// arm itself is still spent by the first hit, so nothing new can be fished for.
+        /// </summary>
+        private static bool CoveredByRecentParry(bool swingClass) =>
+            LastParryAt > double.MinValue
+            && Time.timeAsDouble - LastParryAt <= Mathf.Max(0f, Plugin.ParryCoverWindow.Value)
+            && swingClass == _lastParrySwingClass;
+
         private static void Parry(PlayerInfo player, string what, int cost)
         {
             LastParryAt = Time.timeAsDouble;
+            _lastParrySwingClass = _parrySwing && !_parryProjectile ? true : (_parryProjectile && !_parrySwing ? false : IsSwingClassName(what));
             _parryArmedUntil = double.MinValue;   // one release, one parry
             if (Plugin.PerfectParryRefundsUse.Value) UseCooldownUntil = double.MinValue;
             ParryFx.Play(player);   // flash, burst, sound, shake -- the same thing everyone else sees over SbgNet
@@ -751,6 +764,15 @@ namespace SbgShields
                 HasPendingVelocityCorrection = true;
                 return false;
             }
+            // The tail of a parry: a second hit of the same class right behind the one
+            // that was read (the next rocket of a volley). Unblockables are never covered.
+            else if (cost != CostUnblockable && cost != CostBypass && CoveredByRecentParry(IsSwingClass(type)))
+            {
+                Plugin.Log.LogInfo($"PARRY also covers {type} ({(Time.timeAsDouble - LastParryAt) * 1000.0:0} ms after the parry; would have cost {CostLabel(cost)}).");
+                PendingVelocityCorrection    = -incomingVelocityChange;
+                HasPendingVelocityCorrection = true;
+                return false;
+            }
 
             // A lingering body (ParryLinger, after the key is up) is drawn but stops
             // nothing: the release is the commitment. Only the parry can save you now.
@@ -887,8 +909,10 @@ namespace SbgShields
             // 70% launch barely lingers, a 150% one floats at the top for everyone to see.
             LaunchHangScale              = Mathf.InverseLerp(Plugin.CloudHitMinPercent.Value, Mathf.Max(Plugin.CloudHitMinPercent.Value + 1f, Plugin.HangFullPercent.Value), Percent);
             Launch.Begin();
-            if (Plugin.VerboseLogging.Value)
-                Plugin.Log.LogInfo($"Hit {type} [{cat}] at {Percent:0}%{(explosive ? $" from {PendingHitDistance:0.0}m" : "")}: force x{forceMult:0.00} x{catScale:0.00}, |v| {incomingVelocityChange.magnitude:0.0} -> {shaped.magnitude:0.0} (h {new Vector2(shaped.x, shaped.z).magnitude:0.0}, up {shaped.y:0.0}), hitstun x{PendingHitstunMultiplier:0.00}");
+            // Always on, one line per hit that lands: what hit you, from how far, at what
+            // percent, and how hard. "I got knocked back after X" starts here.
+            Plugin.Log.LogInfo($"Hit {type} landed at {Percent:0}%{(explosive ? $" from {PendingHitDistance:0.0}m" : "")}: +{PendingPercentGain:0}%, launch {shaped.magnitude:0.0} m/s" +
+                               (Plugin.VerboseLogging.Value ? $" [{cat}] force x{forceMult:0.00} x{catScale:0.00}, |v| {incomingVelocityChange.magnitude:0.0} (h {new Vector2(shaped.x, shaped.z).magnitude:0.0}, up {shaped.y:0.0}), hitstun x{PendingHitstunMultiplier:0.00}" : "") + ".");
             _awaitingResult = true;
             return true;
         }

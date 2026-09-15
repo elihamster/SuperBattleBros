@@ -18,7 +18,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.32";
+        public const string Version = "0.7.33";
 
         internal static ManualLogSource Log;
 
@@ -52,6 +52,7 @@ namespace SbgShields
         internal static ConfigEntry<float> ParryReadTime;
         internal static ConfigEntry<float> ParryReadRange;
         internal static ConfigEntry<float> ParryArmTime;
+        internal static ConfigEntry<float> ParryCoverWindow;
         internal static ConfigEntry<bool>  AimedAtParry;   // experimental, see AimedAt.cs
         internal static ConfigEntry<float> AimedAtRange;
         internal static ConfigEntry<bool>  PerfectParryBeatsFullBreak;
@@ -392,6 +393,10 @@ namespace SbgShields
             ParryArmTime = Config.Bind("Parry", "ParryArmTime", 0.5f,
                 "Seconds an armed parry stays live, so what was in reach has time to actually arrive. Not a timing window you aim for: " +
                 "with nothing in reach at release it never opens at all.");
+            ParryCoverWindow = Config.Bind("Parry", "ParryCoverWindow", 0.2f,
+                "Seconds after a parry during which another hit of the same class (projectile after projectile, club after club) " +
+                "is parried too: the second rocket of a volley, the ball and what it knocked loose. The arm is still spent by the " +
+                "first hit, so nothing new can be fished for. 0 = one hit per parry.");
             AimedAtParry = Config.Bind("Parry", "AimedAtParry", true,
                 "EXPERIMENTAL. Guns are instant, so nothing is ever in reach to arm a parry against them. Instead: another player " +
                 "aiming an item along a line through your bubble when you let go arms a parry, the same as a projectile in reach. " +

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.33 (test build)
+
+- A parry covers the hits right behind the one it read: another projectile within 0.2 s of a parried projectile is parried too (a rocket volley), likewise club after club. The arm is still spent by the first hit. `Parry.ParryCoverWindow`.
+- Every hit that lands now logs one line: type, distance, percent before, percent gained, launch speed. Before this, only absorbs and parries logged, so a knockback right after a parry had no trace of where it came from.
+
 ## 0.7.32 (test build)
 
 - The stand-down panel no longer flashes on every course load. It only appears once the mod has actually been standing down for a second and a half.
