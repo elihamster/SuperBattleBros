@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.39 (test build)
+
+Fixes from an independent review of 0.7.35 to 0.7.38.
+
+- The Shift buffer only carries a press that could not raise the bubble on its own frame. Before, every tap was held at least 0.15 s, which armed the parry late.
+- Out of lives stays out: the player stays hidden for the rest of the hole even if the hole ends or a host message is lost, and keeps asking the host to mark them out until it has.
+- A parry's stun lasts its own 1.2 s (no landing-stun floor or air hold on top) and can never trigger a star KO.
+- Re-raising the bubble closes a parry's reflect window on every machine, not just your own.
+- A star KO whose credited player just left still shows and still goes in the feed (crediting nobody).
+- A Shift press in the last moment of a parry hold is no longer lost.
+
 ## 0.7.38 (test build)
 
 - **Stock mode.** Set `Stocks.StocksPerHole` on the host (0 = off, the default) and every player starts each hole with that many lives. Every star KO costs one; the last one puts you out of the hole: you stay gone, the scoreboard shows you eliminated, and the hole carries on. Works in free-for-all and teams. The host's number is the rule for everyone (sent over the mod's message), each player counts their own lives, and the HUD shows yours as small bubbles above the percent. Needs the percent layer and the kill zone, since a star KO is what costs a life. The hole summary line counts lives lost.

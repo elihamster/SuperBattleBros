@@ -171,7 +171,13 @@ namespace SbgShields
             {
                 if (conn == null) return;
                 if (m.Kind < (byte)Kind.Percent || m.Kind > MaxKind) return;
-                if (m.Target != 0u && FindPlayer(m.Target) == null) return;   // a target that is not in this lobby
+                if (m.Target != 0u && FindPlayer(m.Target) == null)
+                {
+                    // A target that is not in this lobby (just left). A star KO still happened;
+                    // it just credits nobody. Anything else aimed at a missing player is dropped.
+                    if ((Kind)m.Kind != Kind.StarKo) return;
+                    m.Target = 0u;
+                }
                 if (float.IsNaN(m.A) || float.IsInfinity(m.A)) return;
                 var p = FindPlayer(m.NetId);
                 if (p == null || p.connectionToClient != conn) return;   // only about yourself

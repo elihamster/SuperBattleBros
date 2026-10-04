@@ -176,7 +176,8 @@ namespace SbgShields
 
         internal static void Mark(PlayerInfo p, float seconds)
         {
-            if (p == null || seconds <= 0f) return;
+            if (p == null) return;
+            if (seconds <= 0f) { End(p); return; }
             _until[p] = Time.timeAsDouble + Mathf.Min(seconds, 2f);
             BubbleColliderPatch.Refresh(p);
         }
@@ -185,6 +186,9 @@ namespace SbgShields
         {
             if (p == null || !_until.Remove(p)) return;
             BubbleColliderPatch.Refresh(p);
+            // Our own window closing early (a re-raise, a parry) must close everywhere, or
+            // the host keeps our new bubble a wall that bounces things for free.
+            if (Local.Is(p)) { try { SbgNet.Send(SbgNet.Kind.ParryReflect, 0f); } catch { } }
         }
 
         internal static void Tick()

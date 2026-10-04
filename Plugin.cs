@@ -19,7 +19,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.38";
+        public const string Version = "0.7.39";
 
         internal static ManualLogSource Log;
 
@@ -1056,11 +1056,15 @@ namespace SbgShields
             bool held    = keyboard.leftShiftKey.isPressed;
             bool pressed = keyboard.leftShiftKey.wasPressedThisFrame;
             double nowT  = Time.timeAsDouble;
-            if (pressed) _pressedAt = nowT;
-            // A press a moment early is not lost: for InputBuffer seconds it counts as held,
-            // so the bubble comes up on the first frame it is allowed. A buffered tap then
-            // lasts the buffer and is released like any tap.
-            bool buffered = !held && nowT - _pressedAt <= Mathf.Max(0f, InputBuffer.Value) && !_bufferUsed;
+            // A press a moment early is not lost: if it could not raise the bubble on its own
+            // frame, it stays pending for InputBuffer seconds and raises it on the first frame
+            // that is allowed, as a tap. A press that raised the bubble at once is not
+            // buffered at all, so an ordinary tap is exactly as long as the key was down
+            // (which is what arms the parry). Recorded before the parry-sequence return, so a
+            // press in the last moment of the hold still counts.
+            if (pressed) { _pressedAt = nowT; _bufferPending = true; }
+            if (_bufferPending && (nowT - _pressedAt > Mathf.Max(0f, InputBuffer.Value) || _weActivated)) _bufferPending = false;
+            bool buffered = !held && _bufferPending;
 
             // The parry sequence is committed: no raise, no re-raise, until the bubble snaps off.
             if (InParrySequence) return;
@@ -1095,7 +1099,11 @@ namespace SbgShields
                 if (!player.IsElectromagnetShieldActive)
                 {
                     TryActivate(player);
-                    if (!held && _weActivated) Log.LogInfo("Shift press buffered: bubble up on the first allowed frame.");
+                    if (_weActivated)
+                    {
+                        if (!held) Log.LogInfo($"Shift press buffered: bubble up {(nowT - _pressedAt) * 1000.0:0} ms after the press.");
+                        _bufferPending = false;   // spent: a buffered raise is released next frame like a tap
+                    }
                 }
                 else if (_weActivated)
                     _activationTimestamp(player) = Time.timeAsDouble; // refresh, never expires
@@ -1103,13 +1111,11 @@ namespace SbgShields
             else if (_weActivated)
             {
                 ReleaseShield();
-                if (!held) _bufferUsed = true;   // one buffered tap per press
             }
-            if (pressed) _bufferUsed = false;
         }
 
         private static double _pressedAt = double.MinValue;
-        private static bool   _bufferUsed;
+        private static bool   _bufferPending;
 
         private void OnGUI()
         {

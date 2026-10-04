@@ -419,7 +419,7 @@ namespace SbgShields
             if (_holding && (!mv.IsKnockedOut || _holdFor != mv.IsKnockedOutTimestamp)) Released(mv, mv.IsKnockedOut ? "new knockout" : "ended");
 
             if (mv.KnockoutState != KnockoutState.InAir) return;
-            if (!Plugin.StayDownUntilLanding.Value || !ModHandshake.GameplayEnabled || KillZone.IsArmed) { Released(mv, "not holding"); return; }
+            if (!Plugin.StayDownUntilLanding.Value || !ModHandshake.GameplayEnabled || KillZone.IsArmed || ShieldState.CurrentKnockoutIsParryStun) { Released(mv, "not holding"); return; }
             try { if (mv.PlayerInfo.AsHittable.FrozenState == FrozenState.Frozen) { Released(mv, "frozen"); return; } } catch { }
             if (mv.IsRespawningOrDrowning) { Released(mv, "respawning"); return; }
 

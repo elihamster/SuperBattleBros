@@ -46,11 +46,17 @@ namespace SbgShields
         /// <summary>The local player's lives left this hole, or -1 before the first count.</summary>
         internal static int Remaining = -1;
 
-        /// <summary>The local player ran out this hole: hidden, out, until the next hole.</summary>
-        internal static bool OutLocal => On && Remaining == 0;
+        /// <summary>
+        /// The local player ran out this hole: hidden, out, until the next hole resets it.
+        /// A flag of its own, not "On and zero": the mode can read off mid-hole (a lost host
+        /// message, the hole ending), and the player must not pop back into the sky then.
+        /// </summary>
+        internal static bool OutLocal;
+        private static double _outSentAt = double.MinValue;
 
         internal static void OnHoleStart()
         {
+            OutLocal = false;
             Remaining = Mode > 0 ? Mode : -1;
             _remote.Clear();
             _lastCountSent = double.MinValue;
@@ -72,6 +78,14 @@ namespace SbgShields
                 return;
             }
             Plugin.Log.LogInfo("Stocks: out of lives; out of this hole.");
+            OutLocal = true;
+            AskToBePutOut();
+        }
+
+        /// <summary>The host is the one that can mark us out. Ask, and keep asking every 2 s until it has.</summary>
+        private static void AskToBePutOut()
+        {
+            _outSentAt = Time.timeAsDouble;
             bool host = false;
             try { host = NetworkServer.active; } catch { }
             if (host) ServerPutOut(GameManager.LocalPlayerInfo);
@@ -104,6 +118,13 @@ namespace SbgShields
             try { host = NetworkServer.active; } catch { }
             if (host && now - _lastModeSent >= 2.0 && SbgNet.Send(SbgNet.Kind.StockMode, Mode)) _lastModeSent = now;
             if (On && Remaining >= 0 && now - _lastCountSent >= 2.0 && SbgNet.Send(SbgNet.Kind.Stocks, Remaining)) _lastCountSent = now;
+
+            if (OutLocal && now - _outSentAt >= 2.0)
+            {
+                bool resolved = false;
+                try { var g = GameManager.LocalPlayerInfo != null ? GameManager.LocalPlayerInfo.AsGolfer : null; resolved = g != null && g.IsMatchResolved; } catch { }
+                if (!resolved) AskToBePutOut();
+            }
         }
 
         private static System.Reflection.MethodInfo _setResolution;
@@ -118,7 +139,9 @@ namespace SbgShields
             if (p == null || p.AsGolfer == null) return;
             try
             {
-                if (!NetworkServer.active || !On) return;
+                // Not gated on this machine's own reading of the mode: the player's game already
+                // counted the lives, and refusing here left them hidden and never out.
+                if (!NetworkServer.active || !ModHandshake.GameplayEnabled) return;
                 if (!_looked)
                 {
                     _looked = true;

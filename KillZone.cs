@@ -212,7 +212,18 @@ namespace SbgShields
             if (!ok)
             {
                 ShieldState.KillZoneDeathPending = false;
-                Plugin.Log.LogWarning("Kill zone: the game refused the respawn (already respawning / match resolved).");
+                bool resolved = false;
+                try { resolved = mv.PlayerInfo.AsGolfer.IsMatchResolved; } catch { }
+                if (resolved || Stocks.OutLocal)
+                {
+                    // Out of the hole (stocks, or the hole ended): stay gone, do not pop back
+                    // into view at the spot of the star KO. The next hole brings us back.
+                    _lingering = true;
+                    _respawnAt = double.MaxValue;
+                    Plugin.Log.LogInfo("Kill zone: out of this hole; staying hidden until the next one.");
+                    return;
+                }
+                Plugin.Log.LogWarning("Kill zone: the game refused the respawn (already respawning).");
                 try { mv.NetworkisVisible = true; } catch { }
             }
         }

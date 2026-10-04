@@ -105,6 +105,9 @@ namespace SbgShields
         /// <summary>The knockout currently running began as a break. Set by HitstunPatch on the fresh knockout.</summary>
         internal static bool CurrentKnockoutIsBreak;
 
+        /// <summary>The knockout currently running is a parry's stun on us: its length is ParryAttackerStun, nothing else.</summary>
+        internal static bool CurrentKnockoutIsParryStun;
+
         // ---- Refund on a refused knockout ------------------------------------
         // We have to spend the shield in the PREFIX: while it is up the game's own
         // CanBeKnockedOutBy returns false for every FullyBlocked hit, so the shield
@@ -1331,8 +1334,9 @@ namespace SbgShields
                 }
                 if (PendingPercentGain > 0f) AddPercent(PendingPercentGain);
                 if (_pendingLandedLine != null) Plugin.Log.LogInfo(_pendingLandedLine);
-                if (InPlayableHole && Plugin.PercentEnabled.Value && Plugin.KillZoneEnabled.Value && Percent >= Plugin.KillPercent.Value && !KillZone.IsArmed)
+                if (!ParryStun.Requesting && InPlayableHole && Plugin.PercentEnabled.Value && Plugin.KillZoneEnabled.Value && Percent >= Plugin.KillPercent.Value && !KillZone.IsArmed)
                     KillZone.Arm();
+                CurrentKnockoutIsParryStun = ParryStun.Requesting;
                 // Your own knockout spends any parry still armed from before it.
                 DisarmParry();
             }
@@ -1581,6 +1585,15 @@ namespace SbgShields
                         && pressed && bigEnough;
             bool held = AirHold.IsHolding;
             if (tech) { _techPending = true; return; }
+            if (CurrentKnockoutIsParryStun)
+            {
+                // The stun's length is the stun's: no landing stun or floors on top of it.
+                float sinceStun = (float)(now - mv.IsKnockedOutTimestamp);
+                float rest = Mathf.Max(0.05f, Plugin.ParryAttackerStun.Value - sinceStun);
+                if (held) { HitstunPatch.SetRecoveryTimer(mv, rest); AirHold.Released(mv, "landed"); }
+                else HitstunPatch.ClampRecoveryTimer(mv, rest, out _);
+                return;
+            }
             if (pressed && !bigEnough && Plugin.TechEnabled.Value && !CurrentKnockoutIsBreak)
                 Plugin.Log.LogInfo($"TECH refused: launch too small to tech (no smoke trail; needs {Plugin.LaunchTrailStartSpeed.Value:0} m/s at {Plugin.LaunchTrailMinPercent.Value:0}%+, you were at {EffectivePercent:0}%).");
 
