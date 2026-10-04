@@ -35,8 +35,10 @@ namespace SbgShields
         /// ParryStun: an event aimed at Target (the attacker), whose own game knocks them down.
         /// ParryReflect: A = seconds the sender's bubble bounces homing items back.
         /// </summary>
-        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3, Pips = 4, ParryStun = 5, ParryReflect = 6 }
-        private const byte MaxKind = (byte)Kind.ParryReflect;
+        /// Stocks: A = the sender's lives left. StockMode: A = lives per hole (host only; 0 = off).
+        /// OutOfStocks: the sender's last life is gone; the host puts them out of the hole.
+        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3, Pips = 4, ParryStun = 5, ParryReflect = 6, Stocks = 7, StockMode = 8, OutOfStocks = 9 }
+        private const byte MaxKind = (byte)Kind.OutOfStocks;
 
         internal struct Msg : NetworkMessage
         {
@@ -176,6 +178,8 @@ namespace SbgShields
                 if (!ModHandshake.GameplayEnabled) return;
                 m.A = Mathf.Clamp(m.A, 0f, 1000f);
                 if ((Kind)m.Kind == Kind.StarKo) Credits.PostStarKo(p, m.Target != 0u ? FindPlayer(m.Target) : null, (KnockoutType)(int)m.A);
+                if ((Kind)m.Kind == Kind.StockMode && !Local.Is(p)) return;     // only the host says what the mode is
+                if ((Kind)m.Kind == Kind.OutOfStocks) { Stocks.ServerPutOut(p); return; }
                 Relay(m);
             }
             catch (Exception e) { WarnOnce("server", e); }
@@ -223,6 +227,12 @@ namespace SbgShields
                         break;
                     case Kind.ParryReflect:
                         ParryReflect.Mark(p, Mathf.Clamp(m.A, 0f, 2f));
+                        break;
+                    case Kind.Stocks:
+                        Stocks.OnRemoteCount(p, m.A);
+                        break;
+                    case Kind.StockMode:
+                        Stocks.OnHostMode(m.A);
                         break;
                 }
             }

@@ -258,6 +258,10 @@ namespace SbgShields
             if (showPercent)
                 DrawPercent(new Rect(left, pctBottom - _pctSize.y, _pctSize.x, _pctSize.y), _pctContent.text, fontSize);
 
+            // Stock mode: lives left, as small bubbles in your colour above the percent.
+            if (showPercent && Stocks.On && Stocks.Remaining >= 0)
+                DrawStocks(player, new Vector2(left + _pctSize.x * 0.5f, pctBottom - _pctSize.y - 6f * scale), Stocks.Mode, Stocks.Remaining, scale);
+
             // Bubble readiness icon, bottom-aligned with the percent. Shown when the
             // shield is up or could be raised; when it cannot (cart, knocked out,
             // respawning, diving, swinging) only a running break cooldown keeps it on
@@ -613,6 +617,24 @@ namespace SbgShields
                     GUI.DrawTexture(new Rect(0f, 0f, r.width, r.height), _dotTex, ScaleMode.ScaleToFit, true);
                     GUI.EndGroup();
                 }
+            }
+            GUI.color = prev;
+        }
+
+        /// <summary>A row of stock bubbles centred on `bottomCentre`: full ones for lives left, faint rings for lives spent.</summary>
+        private static void DrawStocks(PlayerInfo player, Vector2 bottomCentre, int total, int left, float scale)
+        {
+            if (_bubbleTex == null || total <= 0) return;
+            var prev = GUI.color;
+            Color skin = Skin.Of(player);
+            float size = 18f * scale, gapX = 5f * scale;
+            float row = total * size + (total - 1) * gapX;
+            float x = bottomCentre.x - row * 0.5f, y = bottomCentre.y - size;
+            for (int i = 0; i < total; i++)
+            {
+                var r = new Rect(x + i * (size + gapX), y, size, size);
+                GUI.color = i < left ? skin : new Color(1f, 1f, 1f, 0.22f);
+                GUI.DrawTexture(r, _bubbleTex, ScaleMode.ScaleToFit, true);
             }
             GUI.color = prev;
         }

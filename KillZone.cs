@@ -132,6 +132,7 @@ namespace SbgShields
             ShieldState.LastHitBy = null;
 
             ShieldState.Percent = Mathf.Max(0f, Plugin.PercentAfterKillZoneDeath.Value);
+            try { Stocks.OnLocalStarKo(); } catch (Exception e) { Plugin.Log.LogWarning("Stocks: " + e.Message); }
 
             // Vanish on the spot. The camera keeps looking at where you were, which is
             // the pause that makes the death land. Then the normal respawn.
@@ -193,8 +194,9 @@ namespace SbgShields
             if (mv.IsRespawningOrDrowning) { _lingering = false; return; } // something else took over
 
             // No per-frame re-assert here: LocalPlayerUpdateVisibilityPatch holds the
-            // hidden state at the source instead, so we only wait.
-            if (Time.timeAsDouble < _respawnAt) return;
+            // hidden state at the source instead, so we only wait. Out of lives: stay gone
+            // for the rest of the hole (the next hole's reset brings you back).
+            if (Time.timeAsDouble < _respawnAt || Stocks.OutLocal) return;
 
             _lingering = false;
             BeginRespawn(mv);

@@ -242,6 +242,7 @@ namespace SbgShields
             Launch.Cancel();
             DisarmParry();
             ClearPending();
+            Stocks.OnHoleStart();
             Plugin.Log.LogInfo($"Full reset ({why}): pips={Pips}, percent=0.");
         }
 
@@ -258,6 +259,7 @@ namespace SbgShields
             Launch.Cancel();
             DisarmParry();
             ClearPending();
+            Stocks.OnHoleStart();
             if (Plugin.VerboseLogging.Value)
                 Plugin.Log.LogInfo($"New hole: pips={Pips}, percent={Percent:0}");
         }
@@ -349,7 +351,7 @@ namespace SbgShields
 
         internal struct HoleStats
         {
-            public int Landed, Refused, Absorbed, Parries, Breaks, Techs, StarKos, ParriedBy;
+            public int Landed, Refused, Absorbed, Parries, Breaks, Techs, StarKos, ParriedBy, StocksLost;
             public float PeakPercent;
         }
         internal static HoleStats Stats;
@@ -358,7 +360,8 @@ namespace SbgShields
         {
             var s = Stats;
             Plugin.Log.LogInfo($"Hole summary ({why}): hits taken {s.Landed}, refused {s.Refused}, absorbed {s.Absorbed}, parries {s.Parries}, " +
-                               $"breaks {s.Breaks}, techs {s.Techs}, star KOs {s.StarKos}, stunned by a parry {s.ParriedBy}, peak {s.PeakPercent:0}%." +
+                               $"breaks {s.Breaks}, techs {s.Techs}, star KOs {s.StarKos}, stunned by a parry {s.ParriedBy}, peak {s.PeakPercent:0}%" +
+                               (Stocks.Mode > 0 ? $", lives lost {s.StocksLost}." : ".") +
                                SbgNet.RemotePeaksText());
             Stats = default(HoleStats);
             SbgNet.ResetRemotePeaks();

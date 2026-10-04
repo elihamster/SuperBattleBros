@@ -36,6 +36,12 @@ A parry plays as one committed moment, the same on every screen: an impact frame
 
 **Invulnerability look.** While the game's comeback shield is up, the body flickers washed-out white, Smash-style, on every client. Past 100% embers rise off you, redder toward the kill line.
 
+**Kill feed.** A star KO shows in the game's own kill feed, crediting whoever landed the launch that killed.
+
+## Stock mode
+
+Off by default. Set `Stocks.StocksPerHole` on the host and every player starts each hole with that many lives. Each star KO costs one; lose the last and you are out of the hole, eliminated on the scoreboard, while everyone else plays on. Your lives show as small bubbles above your percent. The host's number is the rule for the whole lobby.
+
 ## Turning things off
 
 Three master switches, each layer coming off cleanly on its own (`com.sbg.shields.cfg`, or in game with ModConfig):

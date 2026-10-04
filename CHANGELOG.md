@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.38 (test build)
+
+- **Stock mode.** Set `Stocks.StocksPerHole` on the host (0 = off, the default) and every player starts each hole with that many lives. Every star KO costs one; the last one puts you out of the hole: you stay gone, the scoreboard shows you eliminated, and the hole carries on. Works in free-for-all and teams. The host's number is the rule for everyone (sent over the mod's message), each player counts their own lives, and the HUD shows yours as small bubbles above the percent. Needs the percent layer and the kill zone, since a star KO is what costs a life. The hole summary line counts lives lost.
+
 ## 0.7.37 (test build)
 
 - **Star KOs are credited in the game's kill feed** on every screen: whoever landed the launch that killed (the last hit that knocked you out, within 15 s), with that hit's icon. A star KO nobody caused shows as a self-elimination. The host posts it. `Percent.KillFeedStarKo`.

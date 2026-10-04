@@ -19,7 +19,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.37";
+        public const string Version = "0.7.38";
 
         internal static ManualLogSource Log;
 
@@ -103,6 +103,7 @@ namespace SbgShields
         internal static ConfigEntry<float> KillZoneDeathLinger;
         internal static ConfigEntry<bool>  KillZoneBoom;
         internal static ConfigEntry<bool>  KillFeedStarKo;
+        internal static ConfigEntry<int>   StocksPerHole;
         internal static ConfigEntry<float> KillZoneBoomCarry;
 
         // Launch
@@ -570,6 +571,10 @@ namespace SbgShields
                 "Seconds you stay gone after the star flash before respawning. The camera holds on the spot.");
             KillZoneBoom = Config.Bind("Percent", "KillZoneBoom", true,
                 "Play the shield-explosion boom and a heavy screenshake on a star KO. Placeholder until custom SFX.");
+            StocksPerHole = Config.Bind("Stocks", "StocksPerHole", 0,
+                "STOCK MODE. Lives each player gets per hole; every star KO costs one and the last one puts you out of the hole " +
+                "(eliminated on the scoreboard). The HOST's value is the rule for everyone. 0 = off (unlimited, the normal game). " +
+                "Needs the percent layer and the kill zone on, since a star KO is what costs a life.");
             KillFeedStarKo = Config.Bind("Percent", "KillFeedStarKo", true,
                 "Put every star KO in the game's kill feed, crediting whoever landed the launch that killed (the host posts it, so " +
                 "the host's setting is the one that counts).");
@@ -984,7 +989,7 @@ namespace SbgShields
         private static readonly Action _tickNet = SbgNet.Tick, _tickHandshake = ModHandshake.Tick, _tickState = ShieldState.Tick,
                                         _tickTint = ShieldTint.Tick, _tickLaunchVfx = LaunchVfx.Tick, _tickKillZone = KillZone.Tick,
                                         _tickFlicker = ImmunityFlicker.Tick, _tickLinger = TickLinger,
-                                        _tickHitStop = HitStop.Tick, _tickReflect = ParryReflect.Tick;
+                                        _tickHitStop = HitStop.Tick, _tickReflect = ParryReflect.Tick, _tickStocks = Stocks.Tick;
 
         private static void TickLinger()
         {
@@ -1006,6 +1011,7 @@ namespace SbgShields
             Safe("Linger", _tickLinger);
             Safe("HitStop", _tickHitStop);
             Safe("ParryReflect", _tickReflect);
+            Safe("Stocks", _tickStocks);
             Safe("ShieldState", _tickState);
             Safe("ShieldTint", _tickTint);
             Safe("LaunchVfx", _tickLaunchVfx);
