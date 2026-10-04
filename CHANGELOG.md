@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.36 (test build)
+
+Smoother play, and numbers for balancing.
+
+- **Shift is buffered.** A press a moment before the bubble is allowed up (a cooldown ending, a swing finishing, a get-up) is remembered for 0.15 s and the bubble comes up on the first frame it can. `Shield.InputBuffer`, 0 = off.
+- **Cooldown ring.** While the bubble cools down, a ring of beads round the HUD icon fills clockwise in your colour until it is ready, alongside the seconds. `HUD.CooldownRing`.
+- **One summary line per hole** in the log: hits taken, refused, absorbed, parries, breaks, techs, star KOs, times stunned by a parry, your peak percent, and other players' peaks. Paste these after a session and the next balance pass has numbers.
+- Fixes from an independent review of 0.7.34: if the host's removal of an unmodded player fails, the host stands down after 4 s and tries again, instead of playing modded rules with a vanilla player; when the game takes the bubble down by itself (respawn, going invisible) the linger is forgotten, so a magnet item used right after is not mistaken for the bubble; a teammate's aim arms a parry when the lobby lets their shots land; a crash in hit resolution only drops that one hit's correction; the removal chat line names the mod the way r2modman lists it; `BreakStunIgnoresComebackImmunity` says what it does now.
+
 ## 0.7.35 (test build)
 
 The parry sequence.

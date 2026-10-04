@@ -329,6 +329,41 @@ namespace SbgShields
             }
         }
 
+        /// <summary>0 at the start of whichever cooldown is binding, 1 when the bubble is ready. Drives the HUD ring.</summary>
+        internal static float CooldownProgress
+        {
+            get
+            {
+                double now = Time.timeAsDouble;
+                bool breakBinding = BreakCooldownUntil >= UseCooldownUntil;
+                double until = breakBinding ? BreakCooldownUntil : UseCooldownUntil;
+                float total = breakBinding ? Plugin.BreakCooldown.Value : Plugin.UseCooldown.Value;
+                if (until <= now || total <= 0.01f) return 1f;
+                return Mathf.Clamp01(1f - (float)((until - now) / total));
+            }
+        }
+
+        // ---- Per-hole numbers, for one summary line at the end of each hole ----------
+        // Balancing from numbers instead of impressions: paste the summary lines from a
+        // session and the next tuning pass has data.
+
+        internal struct HoleStats
+        {
+            public int Landed, Refused, Absorbed, Parries, Breaks, Techs, StarKos, ParriedBy;
+            public float PeakPercent;
+        }
+        internal static HoleStats Stats;
+
+        internal static void LogHoleSummary(string why)
+        {
+            var s = Stats;
+            Plugin.Log.LogInfo($"Hole summary ({why}): hits taken {s.Landed}, refused {s.Refused}, absorbed {s.Absorbed}, parries {s.Parries}, " +
+                               $"breaks {s.Breaks}, techs {s.Techs}, star KOs {s.StarKos}, stunned by a parry {s.ParriedBy}, peak {s.PeakPercent:0}%." +
+                               SbgNet.RemotePeaksText());
+            Stats = default(HoleStats);
+            SbgNet.ResetRemotePeaks();
+        }
+
         internal static bool CanActivate(out string reason)
         {
             if (Pips <= 0)          { reason = "no pips";         return false; }
@@ -697,6 +732,7 @@ namespace SbgShields
         /// <param name="sentBack">The parried item is a homing item the bubble just reflected to its owner.</param>
         private static void Parry(PlayerInfo player, string what, int cost, bool swingClass, PlayerInfo attacker, bool sentBack)
         {
+            Stats.Parries++;
             LastParryAt = Time.timeAsDouble;
             _lastParrySwingClass = swingClass;
             _parryArmedUntil = double.MinValue;   // one release, one parry
@@ -966,6 +1002,7 @@ namespace SbgShields
                 else
                 {
                     LosePips(cost);
+                    Stats.Absorbed++;
                     bool cancelled = Plugin.AbsorbedHitsCancelKnockback.Value;
                     if (cancelled) AddCorrection(-incomingVelocityChange);
                     if (GameShowsNoSparksFor(type)) PlayAbsorbSparks(player);
@@ -1093,7 +1130,7 @@ namespace SbgShields
         private static bool _refusalCheckWarned;
 
         /// <summary>The game's DoesBypassTeamProtection (PlayerMovement.TryKnockOut), copied: which hits ignore teammate protection.</summary>
-        private static bool BypassesTeamProtection(KnockoutType t)
+        internal static bool BypassesTeamProtection(KnockoutType t)
         {
             switch (t)
             {
@@ -1275,6 +1312,7 @@ namespace SbgShields
         {
             if (knockedOut)
             {
+                if (!ParryStun.Requesting) Stats.Landed++; else Stats.ParriedBy++;
                 if (PendingPercentGain > 0f) AddPercent(PendingPercentGain);
                 if (_pendingLandedLine != null) Plugin.Log.LogInfo(_pendingLandedLine);
                 if (InPlayableHole && Plugin.PercentEnabled.Value && Plugin.KillZoneEnabled.Value && Percent >= Plugin.KillPercent.Value && !KillZone.IsArmed)
@@ -1305,6 +1343,7 @@ namespace SbgShields
                 // juggled around the sky, never landing, until the 10 s time-out forced a
                 // wake-up under the gold shield. A refused hit on a downed body moves nothing.
                 if (_pendingWhileDown) AddCorrection(-_pendingIncoming);
+                Stats.Refused++;
 
                 Plugin.Log.LogInfo($"Hit {_pendingType} refused by the game: no stun{(_pendingWhileDown ? ", shove cancelled" : "")}.");
                 BreakTrace.Log("game REFUSED the knockout: no stun will happen");
@@ -1343,6 +1382,7 @@ namespace SbgShields
             }
             float before = Percent;
             Percent = Mathf.Min(Plugin.MaxPercent.Value, Percent + amount);
+            if (Percent > Stats.PeakPercent) Stats.PeakPercent = Percent;
             if (Percent > before) PercentIncreased?.Invoke(Percent);
             if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Percent {before:0} -> {Percent:0}");
         }
@@ -1440,6 +1480,7 @@ namespace SbgShields
 
         internal static void Break(PlayerInfo player, bool playBreakEffect)
         {
+            Stats.Breaks++;
             LosePips(Pips);
             double now = Time.timeAsDouble;
             BreakCooldownUntil = now + Plugin.BreakCooldown.Value;
@@ -1588,6 +1629,7 @@ namespace SbgShields
                 _setKnockOutState.Invoke(mv, new object[] { KnockoutState.None });
                 AirHold.Released(mv, "teched");
                 TechRootUntil = Time.timeAsDouble + Mathf.Max(0f, Plugin.TechRecovery.Value);
+                Stats.Techs++;
                 Plugin.Log.LogInfo($"TECH: pressed {pressLead * 1000.0:0} ms before landing; up instantly, rooted {Plugin.TechRecovery.Value:0.00}s, {Plugin.TechImmunity.Value:0.00}s bubble.");
             }
             catch (Exception e) { Plugin.Log.LogWarning("Tech failed: " + e.Message); }
@@ -1599,6 +1641,20 @@ namespace SbgShields
             if (!_techRecovery) return false;
             _techRecovery = false;
             return true;
+        }
+
+        /// <summary>
+        /// Hit resolution threw part-way: forget what THIS hit queued and let the game have
+        /// it. Earlier hits in the same physics step keep their corrections.
+        /// </summary>
+        internal static void AbandonThisHit()
+        {
+            PendingVelocityCorrection   -= _thisHitCorrection;
+            HasPendingVelocityCorrection = PendingVelocityCorrection.sqrMagnitude > 1e-6f;
+            if (_launchBegunThisHit) { Launch.Cancel(); LaunchDragUntil = double.MinValue; LaunchHangUntil = double.MinValue; }
+            ClearPendingHitOnly();
+            _awaitingResult = false;
+            ForcingBreakKnockout = false;
         }
 
         /// <summary>

@@ -59,7 +59,8 @@ namespace SbgShields
                 if (p == null || ReferenceEquals(p, me)) continue;
                 bool teammate = false;
                 try { teammate = me.IsTeammateOf(p, excludeSelf: true); } catch { }
-                if (teammate) continue;   // a teammate's shot cannot land, so it arms nothing
+                // A teammate's shot only lands when the lobby turned that protection off.
+                if (teammate && !ShieldState.BypassesTeamProtection(KnockoutTypeOf(p.NetworkedEquippedItem))) continue;
                 try
                 {
                     if (!p.NetworkedIsAimingItem || p.NetworkedEquippedItem == ItemType.None) continue;
@@ -96,6 +97,19 @@ namespace SbgShields
                 }
             }
             return who != null;
+        }
+
+        /// <summary>The knockout an aimed item would deal, for the lobby's teammate-protection rules.</summary>
+        private static KnockoutType KnockoutTypeOf(ItemType item)
+        {
+            switch (item)
+            {
+                case ItemType.DuelingPistol:  return KnockoutType.DuelingPistol;
+                case ItemType.ElephantGun:    return KnockoutType.ElephantGun;
+                case ItemType.RocketLauncher: return KnockoutType.Rocket;
+                case ItemType.Railgun:        return KnockoutType.RailgunDirectHit;
+                default:                      return KnockoutType.Swing;   // protected: a teammate's anything else cannot land
+            }
         }
     }
 }

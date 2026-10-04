@@ -19,7 +19,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.35";
+        public const string Version = "0.7.36";
 
         internal static ManualLogSource Log;
 
@@ -32,6 +32,7 @@ namespace SbgShields
         internal static ConfigEntry<bool>  ShieldAbsorbsHits;
         internal static ConfigEntry<int>   MaxPips;
         internal static ConfigEntry<float> UseCooldown;
+        internal static ConfigEntry<float> InputBuffer;
         internal static ConfigEntry<float> BreakCooldown;
         internal static ConfigEntry<bool>  RestoreAfterBreakCooldown;
         internal static ConfigEntry<float> BreakBounceSpeed;
@@ -217,6 +218,7 @@ namespace SbgShields
         internal static ConfigEntry<bool>   BubbleHudOnLeft;
         internal static ConfigEntry<float>  HudGlow;
         internal static ConfigEntry<bool>   ShowPipDots;
+        internal static ConfigEntry<bool>   CooldownRing;
         internal static ConfigEntry<string> ConfigVersion;
         internal static ConfigEntry<string> PercentFontName;
         internal static ConfigEntry<int>    PercentFontSize;
@@ -389,6 +391,9 @@ namespace SbgShields
                 "No regeneration.");
             UseCooldown = Config.Bind("Shield", "UseCooldown", 3.0f,
                 "Seconds after releasing the shield before it can be raised again. Every raise is a commitment; a parry refunds it.");
+            InputBuffer = Config.Bind("Shield", "InputBuffer", 0.15f,
+                "Seconds a Shift press is remembered when the bubble cannot come up yet (a cooldown ending, a swing finishing, " +
+                "a get-up). It comes up on the first frame it is allowed, so a press a moment early is not a dropped input. 0 = off.");
             BreakCooldown = Config.Bind("Shield", "BreakCooldown", 15.0f,
                 "Seconds the bubble is unavailable after it breaks. With the bounce being mild, this and the boom are the punish.");
             RestoreAfterBreakCooldown = Config.Bind("Shield", "RestoreAfterBreakCooldown", true,
@@ -728,8 +733,9 @@ namespace SbgShields
             BlockAimWhileShielded = Config.Bind("Rooting", "BlockAimWhileShielded", true,
                 "No aiming while the shield is up. Swapping weapons is still allowed.");
             BreakStunIgnoresComebackImmunity = Config.Bind("Rooting", "BreakStunIgnoresComebackImmunity", true,
-                "A hit that breaks your bubble knocks you out (the bounce) even if the game's comeback shield is up. Off = vanilla " +
-                "behaviour, where comeback protection refuses the knockout and the break costs you only the bubble.");
+                "A bubble break knocks you out (the bounce) even if the game's comeback shield came up in the same moment. In " +
+                "practice this only matters with Bubble.BubbleReflects on, where a reflected projectile breaks the bubble: a hit that " +
+                "arrives while the comeback shield is up is refused by the game before the bubble is ever involved.");
             RequireAllPlayersModded = Config.Bind("Network", "RequireAllPlayersModded", true,
                 "Every player needs this exact version. As HOST, anyone who joins without the mod (silent past HandshakeTimeout plus a few " +
                 "seconds) or on another version is removed from the lobby, with a chat line saying why. As a client, the mod stands down " +
@@ -788,6 +794,8 @@ namespace SbgShields
             BubbleHudSize = Config.Bind("HUD", "BubbleHudSize", 64f, "Bubble readiness icon size in pixels at HudScale 1.");
             BubbleHudGap = Config.Bind("HUD", "BubbleHudGap", 22f, "Gap between the percent and the icon.");
             BubbleHudOnLeft = Config.Bind("HUD", "BubbleHudOnLeft", true, "Icon left of the percent (away from the item bar). Off = right of it.");
+            CooldownRing = Config.Bind("HUD", "CooldownRing", true,
+                "While the bubble is cooling down, a ring of beads round the icon fills clockwise in your colour until it is ready.");
             ShowPipDots = Config.Bind("HUD", "ShowPipDots", true, "Show pip dots under the icon. Debug aid; the shield itself should carry this in the final build.");
             HudGlow = Config.Bind("HUD", "HudGlow", 1.0f,
                 "Glow behind the bubble icon and the pip circles, in your skin colour: soft when the bubble is ready, breathing while " +
@@ -940,12 +948,21 @@ namespace SbgShields
         /// </summary>
         private void OnMatchStateChanged(MatchState from, MatchState to)
         {
+            // The hole is over: one summary line for balancing.
+            if (IsPlayState(from) && !IsPlayState(to))
+            {
+                try { ShieldState.LogHoleSummary(to.ToString()); }
+                catch (Exception e) { Log.LogWarning("Hole summary failed: " + e.Message); }
+            }
             if (to != MatchState.TeeOff || from == MatchState.TeeOff) return;
             int hole = -1;
             try { hole = CourseManager.CurrentHoleCourseIndex; } catch { }
             if (hole <= 0) ShieldState.FullReset("match start");
             else ShieldState.ResetForNewHole();
         }
+
+        private static bool IsPlayState(MatchState s) =>
+            s == MatchState.Ongoing || s == MatchState.CountingDownToEnd || s == MatchState.Overtime;
 
         // One failure per subsystem is logged in full; after that it stays quiet so a
         // broken module cannot flood the log, and the others keep running.
@@ -1028,6 +1045,12 @@ namespace SbgShields
 
             bool held    = keyboard.leftShiftKey.isPressed;
             bool pressed = keyboard.leftShiftKey.wasPressedThisFrame;
+            double nowT  = Time.timeAsDouble;
+            if (pressed) _pressedAt = nowT;
+            // A press a moment early is not lost: for InputBuffer seconds it counts as held,
+            // so the bubble comes up on the first frame it is allowed. A buffered tap then
+            // lasts the buffer and is released like any tap.
+            bool buffered = !held && nowT - _pressedAt <= Mathf.Max(0f, InputBuffer.Value) && !_bufferUsed;
 
             // The parry sequence is committed: no raise, no re-raise, until the bubble snaps off.
             if (InParrySequence) return;
@@ -1057,18 +1080,26 @@ namespace SbgShields
             if (pressed && !_weActivated && ShieldLingering && player.IsElectromagnetShieldActive && CouldRaiseNow(player))
                 CancelLingeringShield("re-raised");
 
-            if (held)
+            if (held || buffered)
             {
                 if (!player.IsElectromagnetShieldActive)
+                {
                     TryActivate(player);
+                    if (!held && _weActivated) Log.LogInfo("Shift press buffered: bubble up on the first allowed frame.");
+                }
                 else if (_weActivated)
                     _activationTimestamp(player) = Time.timeAsDouble; // refresh, never expires
             }
             else if (_weActivated)
             {
                 ReleaseShield();
+                if (!held) _bufferUsed = true;   // one buffered tap per press
             }
+            if (pressed) _bufferUsed = false;
         }
+
+        private static double _pressedAt = double.MinValue;
+        private static bool   _bufferUsed;
 
         private void OnGUI()
         {

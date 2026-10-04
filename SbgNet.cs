@@ -54,6 +54,23 @@ namespace SbgShields
         private static float  _lastPipsSent = float.MinValue;
         private static readonly Dictionary<uint, float> _remotePercent = new Dictionary<uint, float>();
         private static readonly Dictionary<uint, float> _remotePips = new Dictionary<uint, float>();
+        private static readonly Dictionary<uint, float> _remotePeak = new Dictionary<uint, float>();
+
+        /// <summary>Other players' peak percent this hole, for the hole summary line. Empty when nobody has told us.</summary>
+        internal static string RemotePeaksText()
+        {
+            if (_remotePeak.Count == 0) return "";
+            var sb = new System.Text.StringBuilder(" Others' peaks:");
+            foreach (var kv in _remotePeak)
+            {
+                var p = FindPlayer(kv.Key);
+                string name; try { name = p != null ? p.PlayerId.PlayerNameNoRichText : "?"; } catch { name = "?"; }
+                sb.Append(' ').Append(name).Append(' ').Append(kv.Value.ToString("0")).Append('%');
+            }
+            return sb.Append('.').ToString();
+        }
+
+        internal static void ResetRemotePeaks() => _remotePeak.Clear();
 
         private static void EnsureSerializers()
         {
@@ -84,6 +101,7 @@ namespace SbgShields
                     _clientReg = false;
                     _remotePercent.Clear();
                     _remotePips.Clear();
+                    _remotePeak.Clear();
                     _lastPercentSent = float.MinValue;
                     _lastPipsSent = float.MinValue;
                 }
@@ -184,6 +202,7 @@ namespace SbgShields
                 {
                     case Kind.Percent:
                         _remotePercent[m.NetId] = m.A;
+                        if (!_remotePeak.TryGetValue(m.NetId, out float peak) || m.A > peak) _remotePeak[m.NetId] = m.A;
                         break;
                     case Kind.StarKo:
                         KillZone.PlayRemoteStar(p);

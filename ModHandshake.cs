@@ -37,7 +37,7 @@ namespace SbgShields
             public bool   Nudged;          // we re-announced once because they stayed silent
             public bool   RepeatReplied;   // we answered one repeat announce from them since our last reset
             public bool   HelloSinceReset; // they have announced since OUR last reset: they are loaded and ready
-            public bool   Kicked;          // host only: we removed them; do not do it twice
+            public double KickedAt = double.MinValue;   // host only: when we asked the game to remove them
             public double ProblemSince = double.MinValue;   // client only: when this peer first looked unmodded or mismatched
         }
 
@@ -420,14 +420,20 @@ namespace SbgShields
                     // friend on a slow load cannot announce until their client is ready.
                     // A wrong version is certain the moment it is announced.
                     if (!peer.Announced && now - peer.FirstSeen <= timeout + KickExtraWait) continue;
-                    if (!peer.Kicked) { peer.Kicked = true; Kick(p, bad); }
-                    continue;   // being removed; not a reason for the host to stand down
+                    if (peer.KickedAt == double.MinValue) { peer.KickedAt = now; Kick(p, bad); }
+                    // Being removed: not a reason for the host to stand down -- for a few seconds.
+                    // If they are still here after that the removal failed, and the host must
+                    // not keep playing modded rules with a player who is not.
+                    if (now - peer.KickedAt < KickConfirmWait) continue;
+                    if (now - peer.KickedAt > KickConfirmWait + 10.0) { peer.KickedAt = now; Kick(p, bad + " (again)"); }
                 }
-
-                // A client whose host has the mod waits a few seconds for the host to
-                // remove them, rather than flipping the whole lobby to vanilla and back.
-                if (peer.ProblemSince == double.MinValue) peer.ProblemSince = now;
-                if (hostVouches && !IsHost(p) && now - peer.ProblemSince < KickGrace) continue;
+                else
+                {
+                    // A client whose host has the mod waits a few seconds for the host to
+                    // remove them, rather than flipping the whole lobby to vanilla and back.
+                    if (peer.ProblemSince == double.MinValue) peer.ProblemSince = now;
+                    if (hostVouches && !IsHost(p) && now - peer.ProblemSince < KickGrace) continue;
+                }
 
                 problem = bad;
                 if (!peer.Warned) { peer.Warned = true; Plugin.Log.LogWarning(problem + "; the mod is standing down."); }
@@ -436,6 +442,9 @@ namespace SbgShields
 
             SetGate(problem == null, problem);
         }
+
+        /// <summary>Seconds the host waits for a removal to take before treating the player as a problem.</summary>
+        private const double KickConfirmWait = 4.0;
 
         /// <summary>Seconds past HandshakeTimeout the host waits on a silent player before removing them.</summary>
         private const double KickExtraWait = 8.0;
@@ -477,7 +486,7 @@ namespace SbgShields
         {
             string name = NameOf(p);
             Plugin.Log.LogWarning($"Removing {name} from the lobby: {why}.");
-            try { ChatBypass.Send($"{name} was removed: this lobby runs Super Battle Bros {Plugin.Version} and every player needs the same version (install it with r2modman)."); }
+            try { ChatBypass.Send($"{name} was removed: this lobby runs the Super Battle Bros mod (SBG Shields {Plugin.Version}) and every player needs the same version. Get it in r2modman, then rejoin."); }
             catch { }
             try
             {

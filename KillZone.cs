@@ -115,6 +115,7 @@ namespace SbgShields
         private static void Fire(PlayerInfo p, PlayerMovement mv)
         {
             _armed = false;
+            ShieldState.Stats.StarKos++;
             Vector3 pos = p.ChestBone != null ? p.ChestBone.position : p.transform.position + Vector3.up;
 
             if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"STAR KO at {ShieldState.Percent:0}% (height {pos.y:0.0}).");

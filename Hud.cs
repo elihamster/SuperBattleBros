@@ -559,9 +559,11 @@ namespace SbgShields
             GUI.DrawTexture(rect, _bubbleTex, ScaleMode.ScaleToFit, true);
             GUI.color = prev;
 
-            // Cooldown timer over the darkened bubble.
+            // Cooldown: a ring of beads round the icon that fills clockwise as the bubble
+            // comes back, readable at a glance mid-fight, plus the seconds in the middle.
             if (!ready)
             {
+                if (Plugin.CooldownRing.Value && !float.IsInfinity(wait)) DrawCooldownRing(rect, skin, ShieldState.CooldownProgress, scale);
                 _timerStyle.fontSize = Mathf.RoundToInt(Plugin.PercentFontSize.Value * 0.42f * scale);
                 string txt = float.IsInfinity(wait) ? "X" : (wait >= 10f ? $"{wait:0}" : $"{wait:0.0}");
                 DrawOutlined(rect, txt, _timerStyle, Color.white, Color.black, Mathf.Max(1f, 2f * scale));
@@ -616,6 +618,30 @@ namespace SbgShields
         }
 
         private static Rect Grow(Rect r, float by) => new Rect(r.x - by, r.y - by, r.width + 2 * by, r.height + 2 * by);
+
+        private const int RingBeads = 24;
+
+        /// <summary>
+        /// IMGUI has no arcs, so the ring is beads: dim ones all the way round, lit ones in
+        /// the skin colour from twelve o'clock clockwise up to how far the cooldown has run.
+        /// </summary>
+        private static void DrawCooldownRing(Rect icon, Color skin, float progress, float scale)
+        {
+            if (_dotTex == null) return;
+            var prev = GUI.color;
+            float radius = Mathf.Max(icon.width, icon.height) * 0.5f + 6f * scale;
+            float bead = Mathf.Max(3f, 5f * scale);
+            int lit = Mathf.Clamp(Mathf.FloorToInt(progress * RingBeads + 0.0001f), 0, RingBeads);
+            for (int i = 0; i < RingBeads; i++)
+            {
+                float a = (i / (float)RingBeads) * Mathf.PI * 2f;
+                float x = icon.center.x + Mathf.Sin(a) * radius;
+                float y = icon.center.y - Mathf.Cos(a) * radius;
+                GUI.color = i < lit ? new Color(skin.r, skin.g, skin.b, 0.95f) : new Color(1f, 1f, 1f, 0.18f);
+                GUI.DrawTexture(new Rect(x - bead * 0.5f, y - bead * 0.5f, bead, bead), _dotTex, ScaleMode.StretchToFill, true);
+            }
+            GUI.color = prev;
+        }
 
         private static void DrawOutlined(Rect r, string text, GUIStyle style, Color fill, Color outline, float thickness)
         {

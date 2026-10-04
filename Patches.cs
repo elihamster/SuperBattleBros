@@ -110,7 +110,7 @@ namespace SbgShields
                 // exception escaping it makes Mirror drop the connection, so a bug here
                 // must degrade to "vanilla hit", never to a disconnect.
                 Plugin.Log.LogError("Hit resolution failed; this hit is vanilla: " + e);
-                ShieldState.ClearPending();
+                ShieldState.AbandonThisHit();
                 return true;
             }
             if (!proceed)
@@ -876,7 +876,14 @@ namespace SbgShields
     [HarmonyPatch(typeof(PlayerInfo), "OnIsElectromagnetShieldActiveChanged")]
     internal static class BubbleColliderPatch
     {
-        private static void Postfix(PlayerInfo __instance) => Refresh(__instance);
+        private static void Postfix(PlayerInfo __instance)
+        {
+            Refresh(__instance);
+            // The game can take our bubble down by itself (respawn, going invisible). Our
+            // linger and hold must not outlive it, or the next shield (the magnet item's)
+            // is mistaken for ours.
+            try { if (Local.Is(__instance) && !__instance.IsElectromagnetShieldActive) Plugin.NotifyShieldDropped(); } catch { }
+        }
 
         /// <summary>
         /// The one rule for whether a shield is a wall, applied to every player by every
