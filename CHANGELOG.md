@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.35 (test build)
+
+The parry sequence.
+
+- **A parry is one committed moment, on every screen.** Impact frame: the parrier freezes for a beat (`Parry.ParryFreeze`, 0.08 s) and nothing can hit them, not even an instant kill. Hold: the bubble stays up and lit while the parrier stays rooted (`Parry.ParryHold`, 0.35 s). Then it snaps off with no fade and control returns. Shift does nothing during the sequence. The attacker does not freeze.
+- **If the bubble was already gone** when the parried hit arrived (the plain linger is shorter than a parry read), it comes back for the sequence.
+- **Homing items go back.** A ball or rocket locked on to you when you let go is sent back to whoever fired it, the game's own way (`Parry.ParryReflectsHoming`). Every player's game agrees, because the reflect window travels over the mod's message to the machine that simulates the item.
+- **A parry stuns the attacker** for 1.2 s (`Parry.ParryStunsAttacker`, `ParryAttackerStun`), applied by the attacker's own game so it shows everywhere and goes through the game's knockdown (stars, comeback shield, kill feed). Not when their homing item is coming back at them: that is the punish.
+- The parry flash lasts the whole sequence; `Parry.ParryGlowDuration` is gone (the sequence decides it).
+- The bubble raised for a parry sequence is quieted like the Shift bubble (no muffle or hum).
+
 ## 0.7.34 (test build)
 
 Cleanup release from the 0.7.33 code review. No new features; a lot of things now work the way they were meant to.

@@ -19,7 +19,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.34";
+        public const string Version = "0.7.35";
 
         internal static ManualLogSource Log;
 
@@ -64,7 +64,11 @@ namespace SbgShields
         internal static ConfigEntry<float> ParrySoundVolume;
         internal static ConfigEntry<float> ParryLinger;
         internal static ConfigEntry<bool>  ParryGlow;
-        internal static ConfigEntry<float> ParryGlowDuration;
+        internal static ConfigEntry<float> ParryFreeze;
+        internal static ConfigEntry<float> ParryHold;
+        internal static ConfigEntry<bool>  ParryReflectsHoming;
+        internal static ConfigEntry<bool>  ParryStunsAttacker;
+        internal static ConfigEntry<float> ParryAttackerStun;
         internal static ConfigEntry<float> ParryGlowBoost;
         internal static ConfigEntry<bool>  ParryBurst;
         internal static ConfigEntry<float> ParryBurstSize;
@@ -262,7 +266,9 @@ namespace SbgShields
         internal static double LastActivationTime => _lastActivationTime;
 
         /// <summary>How long a parry's flash lasts: the bubble, its halo and the HUD flare all read this one number.</summary>
-        internal static float ParryFlashSeconds => Mathf.Max(0.05f, ParryGlowDuration.Value);
+        internal static float ParryFlashSeconds => Mathf.Max(0.05f, ParryFreezeSeconds + ParryHoldSeconds);
+        internal static float ParryFreezeSeconds => Mathf.Clamp(ParryFreeze.Value, 0f, 0.5f);
+        internal static float ParryHoldSeconds   => Mathf.Clamp(ParryHold.Value, 0f, 2f);
 
         /// <summary>
         /// The bubble's body outlives the keypress by ParryLinger, cosmetically. WeActivated
@@ -279,6 +285,13 @@ namespace SbgShields
         /// and the hit was treated as the magnet item's (a free block).
         /// </summary>
         internal static bool ShieldLingering => _lingerUntil > double.MinValue;
+
+        /// <summary>
+        /// The linger running now is a parry sequence's hold (ParrySequence): the player is
+        /// rooted, Shift does nothing, and when it ends the bubble snaps off instead of fading.
+        /// </summary>
+        private static bool _parryHold;
+        internal static bool InParrySequence => _parryHold && ShieldLingering;
 
         /// <summary>Set around our own LocalPlayerActivateElectromagnetShield call, so the item hook can tell it apart.</summary>
         internal static bool ActivatingOurs;
@@ -468,14 +481,27 @@ namespace SbgShields
                 "A short camera kick for anyone close to a parry, so it lands like a hit rather than a fizzle.");
 
             ParryLinger = Config.Bind("Parry", "ParryLinger", 0.3f,
-                "Seconds the bubble is still DRAWN after you let go, so a tap shows its intro before the dissolve instead of " +
+                "Seconds the bubble is still DRAWN after an ordinary release, so a tap shows its intro before the dissolve instead of " +
                 "snapping from full to gone. Cosmetic only: a lingering bubble absorbs nothing and bounces nothing; a hit that " +
                 "arrives in that moment is parried if you read it and lands in full if you did not. Movement is yours the instant " +
-                "the key is up. 0 = the bubble vanishes with the keypress.");
+                "the key is up. A parry has its own sequence (ParryFreeze, ParryHold). 0 = the bubble vanishes with the keypress.");
+            ParryFreeze = Config.Bind("Parry", "ParryFreeze", 0.08f,
+                "THE PARRY SEQUENCE, part 1. When a parry lands the parrier freezes for this many seconds: an impact frame, seen on " +
+                "every screen. Nothing can hit the parrier during it. The attacker does not freeze. 0 = no freeze.");
+            ParryHold = Config.Bind("Parry", "ParryHold", 0.35f,
+                "THE PARRY SEQUENCE, part 2. After the freeze the bubble stays up, lit, for this many seconds while the parrier stays " +
+                "rooted (no moving, jumping, swinging or items), then snaps off instantly with no fade and control returns.");
+            ParryReflectsHoming = Config.Bind("Parry", "ParryReflectsHoming", true,
+                "A parried HOMING item (a locked-on ball or rocket) is sent back to whoever fired it, the way the game's own shield " +
+                "reflects. Everything else a parry stops is simply absorbed: no knockback, no damage, no pips. Every player's game " +
+                "agrees, because the reflect window travels over the mod's network message.");
+            ParryStunsAttacker = Config.Bind("Parry", "ParryStunsAttacker", true,
+                "A parry knocks the attacker down for ParryAttackerStun seconds (not when their homing item is sent back: that is " +
+                "the punish). Decided on the parrier's machine and applied by the attacker's own game, so it shows on every screen.");
+            ParryAttackerStun = Config.Bind("Parry", "ParryAttackerStun", 1.2f,
+                "Seconds a parried attacker stays down. The game's normal knockdown is 3.");
             ParryGlow = Config.Bind("Parry", "ParryGlow", true,
-                "Flash the shield bright when a parry lands.");
-            ParryGlowDuration = Config.Bind("Parry", "ParryGlowDuration", 0.45f,
-                "How long the parry flash lasts, in seconds. The bubble's body is kept drawn for this long after a parry so the flash is seen.");
+                "Flash the bubble bright for the whole parry sequence (freeze plus hold).");
             ParryGlowBoost = Config.Bind("Parry", "ParryGlowBoost", 3f,
                 "How much brighter the flash is than your normal shield colour. The tint pipeline scales by the material's own " +
                 "intensity, so this multiplies rather than washing out to white.");
@@ -895,6 +921,8 @@ namespace SbgShields
             try { LaunchVfx.DestroyAll(); }  catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { KillZone.DestroyAll(); }   catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { ParryFx.DestroyAll(); }    catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
+            try { HitStop.ClearAll(); }      catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
+            try { ParryReflect.ClearAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { ImmunityFlicker.ClearAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { BubbleColliderPatch.RestoreAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { SbgNet.Shutdown(); }           catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
@@ -934,11 +962,14 @@ namespace SbgShields
 
         private static readonly Action _tickNet = SbgNet.Tick, _tickHandshake = ModHandshake.Tick, _tickState = ShieldState.Tick,
                                         _tickTint = ShieldTint.Tick, _tickLaunchVfx = LaunchVfx.Tick, _tickKillZone = KillZone.Tick,
-                                        _tickFlicker = ImmunityFlicker.Tick, _tickLinger = TickLinger;
+                                        _tickFlicker = ImmunityFlicker.Tick, _tickLinger = TickLinger,
+                                        _tickHitStop = HitStop.Tick, _tickReflect = ParryReflect.Tick;
 
         private static void TickLinger()
         {
-            if (_lingerUntil > double.MinValue && Time.timeAsDouble >= _lingerUntil) CancelLingeringShield("linger over");
+            if (_lingerUntil == double.MinValue || Time.timeAsDouble < _lingerUntil) return;
+            if (_parryHold) SnapOffShield(GameManager.LocalPlayerInfo, "parry done");
+            else CancelLingeringShield("linger over");
         }
 
         private void Update()
@@ -952,6 +983,8 @@ namespace SbgShields
             Safe("SbgNet", _tickNet);
             Safe("Handshake", _tickHandshake);
             Safe("Linger", _tickLinger);
+            Safe("HitStop", _tickHitStop);
+            Safe("ParryReflect", _tickReflect);
             Safe("ShieldState", _tickState);
             Safe("ShieldTint", _tickTint);
             Safe("LaunchVfx", _tickLaunchVfx);
@@ -995,6 +1028,9 @@ namespace SbgShields
 
             bool held    = keyboard.leftShiftKey.isPressed;
             bool pressed = keyboard.leftShiftKey.wasPressedThisFrame;
+
+            // The parry sequence is committed: no raise, no re-raise, until the bubble snaps off.
+            if (InParrySequence) return;
             if (pressed)
             {
                 ShieldState.NoteShieldPress(player);   // tech input
@@ -1213,6 +1249,9 @@ namespace SbgShields
 
             if (!player.IsElectromagnetShieldActive) { _weActivated = false; return; }
 
+            // A fresh raise abandons any read from the last release.
+            ShieldState.DisarmParry();
+            ParryReflect.End(player);
             if (VerboseLogging.Value) Log.LogInfo($"Shield up ({ShieldState.Pips} pips).");
         }
 
@@ -1229,11 +1268,14 @@ namespace SbgShields
             ShieldState.ArmParryOnRelease(player);       // looks around the bubble while its collider still exists
             ShieldState.OnShieldReleased();
 
-            float linger = Mathf.Max(0f, ParryLinger.Value);
-            if (linger > 0f && ModHandshake.GameplayEnabled)
+            // The linger. A parry read that found a homing item already asked for a longer
+            // one (the bubble must still be there to send the item back); keep the longer.
+            double end = Time.timeAsDouble + Mathf.Max(0f, ParryLinger.Value);
+            if (_lingerUntil > end) end = _lingerUntil;
+            if (end > Time.timeAsDouble && ModHandshake.GameplayEnabled)
             {
-                _lingerUntil = Time.timeAsDouble + linger;
-                if (VerboseLogging.Value) Log.LogInfo($"Shield key released; body lingers {linger:0.00}s.");
+                _lingerUntil = end;
+                if (VerboseLogging.Value) Log.LogInfo($"Shield key released; body lingers {end - Time.timeAsDouble:0.00}s.");
                 return;
             }
 
@@ -1281,10 +1323,35 @@ namespace SbgShields
             if (until > _lingerUntil) _lingerUntil = until;
         }
 
+        /// <summary>
+        /// The parry sequence's hold. Keeps (or brings back) the bubble until `until`, rooted,
+        /// then snaps it off. The bubble may already be down by the time the parried hit
+        /// arrives (the plain linger is shorter than the parry's arm window); it is raised
+        /// again for the sequence, as long as the game's own activation spacing allows.
+        /// </summary>
+        internal static void StartParryHold(PlayerInfo player, double until)
+        {
+            if (player == null) return;
+            _weActivated = false;
+            if (!player.IsElectromagnetShieldActive && Time.timeAsDouble - _lastActivationTime >= ActivationCooldown.Value)
+            {
+                var useId = new ItemUseId(player.PlayerId.Guid, 0, ItemType.Electromagnet, false);
+                _lastActivationTime = Time.timeAsDouble;
+                ActivatingOurs = true;
+                try { player.LocalPlayerActivateElectromagnetShield(useId); }
+                catch (Exception e) { Log.LogWarning("Parry: could not bring the bubble back for the sequence: " + e.Message); }
+                finally { ActivatingOurs = false; }
+            }
+            if (!player.IsElectromagnetShieldActive) { _parryHold = false; return; }   // nothing to hold; the freeze and effects still play
+            _lingerUntil = until;
+            _parryHold = true;
+        }
+
         /// <summary>Ends the linger: the actual cancel the keypress deferred.</summary>
         private static void CancelLingeringShield(string why)
         {
             _lingerUntil = double.MinValue;
+            _parryHold = false;
 
             var player = GameManager.LocalPlayerInfo;
             if (player == null || !player.IsElectromagnetShieldActive) return;
@@ -1306,6 +1373,7 @@ namespace SbgShields
         internal static void SnapOffShield(PlayerInfo player, string why)
         {
             _lingerUntil = double.MinValue;
+            _parryHold = false;
             if (player == null || !player.IsElectromagnetShieldActive) return;
             try
             {
@@ -1415,6 +1483,7 @@ namespace SbgShields
         {
             _weActivated = false;
             _lingerUntil = double.MinValue;   // it broke; there is no body left to linger
+            _parryHold = false;
         }
     }
 }

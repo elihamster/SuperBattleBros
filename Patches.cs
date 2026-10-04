@@ -9,9 +9,13 @@ namespace SbgShields
         internal static bool Is(PlayerInfo p) =>
             p != null && ReferenceEquals(p, GameManager.LocalPlayerInfo);
 
-        /// <summary>Only OUR Shift bubble roots (the magnet item's shield is left alone), plus the moment after a tech.</summary>
+        /// <summary>
+        /// Only OUR Shift bubble roots (the magnet item's shield is left alone), plus the
+        /// moment after a tech and the whole parry sequence (freeze and hold).
+        /// </summary>
         internal static bool IsRooted(PlayerInfo p) =>
-            Is(p) && ((p.IsElectromagnetShieldActive && Plugin.WeActivated) || ShieldState.TechRooted);
+            Is(p) && ((p.IsElectromagnetShieldActive && Plugin.WeActivated) || ShieldState.TechRooted
+                      || Plugin.InParrySequence || ParrySequence.LocalFrozen);
     }
 
     // =====================================================================
@@ -623,6 +627,13 @@ namespace SbgShields
 
         private static bool _warned;
 
+        /// <summary>The game's step just added gravity; a frozen body still does not move.</summary>
+        private static void Postfix(PlayerMovement __instance)
+        {
+            if (!Local.Is(__instance.PlayerInfo)) return;
+            try { HitStop.HoldBody(__instance, _rigidbody(__instance)); } catch { }
+        }
+
         private static void Prefix(PlayerMovement __instance)
         {
             if (!Local.Is(__instance.PlayerInfo)) return;
@@ -640,6 +651,9 @@ namespace SbgShields
         {
             var rb = _rigidbody(__instance);
             if (rb == null || rb.isKinematic) return;
+
+            // The parry's impact frame: the body does not move.
+            HitStop.HoldBody(__instance, rb);
 
             // Before the game's own UpdateKnockOutState on this step can start the get-up.
             ShieldState.TryExecuteTech(__instance, rb);
@@ -745,10 +759,19 @@ namespace SbgShields
 
         private static void Postfix(PlayerInfo __instance, bool isExplosion)
         {
-            // With the bubble a trigger nothing ever reflects; the only shield-hit
-            // effects are the ones the absorb plays itself, and charging for those
-            // would bill every absorbed hit twice.
-            if (!Plugin.BubbleReflects.Value) return;
+            // With the bubble a trigger nothing reflects, except a homing item during a
+            // parry's reflect window: then this effect IS the reflection, and the parry
+            // happens here. Every other shield-hit effect is one the absorb plays itself,
+            // and charging for those would bill every absorbed hit twice.
+            if (!Plugin.BubbleReflects.Value)
+            {
+                if (!isExplosion && Local.Is(__instance) && ParryReflect.IsSolid(__instance))
+                {
+                    try { ShieldState.OnParryReflection(__instance); }
+                    catch (Exception e) { Plugin.Log.LogWarning("Parry reflection failed: " + e.Message); }
+                }
+                return;
+            }
             if (isExplosion || !Local.Is(__instance) || !__instance.IsElectromagnetShieldActive) return;
             if (Time.timeAsDouble - ShieldState.LastKnockoutChargeTime < 0.5) return; // already charged by TryKnockOut (the RPC echo can lag a ping)
 
@@ -853,15 +876,21 @@ namespace SbgShields
     [HarmonyPatch(typeof(PlayerInfo), "OnIsElectromagnetShieldActiveChanged")]
     internal static class BubbleColliderPatch
     {
-        private static void Postfix(PlayerInfo __instance)
+        private static void Postfix(PlayerInfo __instance) => Refresh(__instance);
+
+        /// <summary>
+        /// The one rule for whether a shield is a wall, applied to every player by every
+        /// machine: a trigger (absorbs) while the mod runs, a wall when standing down
+        /// (vanilla, the magnet item included) or during a parry's reflect window.
+        /// </summary>
+        internal static void Refresh(PlayerInfo p)
         {
             try
             {
-                var col = __instance.ElectromagnetShieldCollider;
+                var col = p != null ? p.ElectromagnetShieldCollider : null;
                 if (col == null) return;
-                // Standing down (public lobby, mismatch) means vanilla: the magnet item's
-                // shield must stay a wall here too, or this machine alone lets things through.
-                bool trigger = __instance.IsElectromagnetShieldActive && !Plugin.BubbleReflects.Value && ModHandshake.GameplayEnabled;
+                bool trigger = p.IsElectromagnetShieldActive && !Plugin.BubbleReflects.Value && ModHandshake.GameplayEnabled
+                               && !ParryReflect.IsSolid(p);
                 if (col.isTrigger != trigger) col.isTrigger = trigger;
             }
             catch { }
@@ -926,11 +955,14 @@ namespace SbgShields
     [HarmonyPatch(typeof(PlayerGolfer), "OnServerWasHitByItem")]
     internal static class InstantKillIgnoresBubblePatch
     {
-        private static void Prefix(ItemType itemType, ref ProtectiveState protectiveState)
+        private static void Prefix(PlayerGolfer __instance, ItemType itemType, ref ProtectiveState protectiveState)
         {
             if (!ModHandshake.GameplayEnabled) return;
             if (itemType != ItemType.OrbitalLaser && itemType != ItemType.Thunderstorm && itemType != ItemType.Railgun) return;
             if ((protectiveState & ProtectiveState.ElectromagnetShield) == 0) return;
+            // The parry's impact frame is untouchable, instant kills included. The host knows
+            // about the freeze from the Parry message every machine receives.
+            try { if (__instance != null && HitStop.IsFrozen(__instance.PlayerInfo)) return; } catch { }
             protectiveState &= ~ProtectiveState.ElectromagnetShield;
             Plugin.Log.LogInfo($"{itemType} hit a bubbled player: bubble ignored, elimination rules apply.");
         }
@@ -1115,8 +1147,9 @@ namespace SbgShields
         private static void Postfix(PlayerAudio __instance, bool isActive)
         {
             if (!isActive) return;
-            // The vanilla magnet item keeps its stock audio; only our Shift shield is quieted.
-            if (!Plugin.WeActivated) return;
+            // The vanilla magnet item keeps its stock audio; only our Shift shield (and a
+            // parry bringing it back for its sequence) is quieted.
+            if (!Plugin.WeActivated && !Plugin.ActivatingOurs) return;
 
             if (Plugin.SuppressMuffle.Value && _muffle != null)
             {

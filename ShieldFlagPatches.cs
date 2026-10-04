@@ -50,9 +50,9 @@ namespace SbgShields
             int patched = 0;
             var targets = new[]
             {
-                (type: typeof(PlayerInventory), prefix: "<ShootDuelingPistolRoutine>g__Shoot|", what: "pistol"),
-                (type: typeof(PlayerInventory), prefix: "<ShootElephantGunRoutine>g__Shoot|",   what: "elephant gun"),
-                (type: typeof(Hittable),        prefix: "<OnCollisionEnter>g__ParseCollision|", what: "ball collision"),
+                (type: typeof(PlayerInventory), prefix: "<ShootDuelingPistolRoutine>g__Shoot|", what: "pistol",         transpiler: nameof(TranspilerGun)),
+                (type: typeof(PlayerInventory), prefix: "<ShootElephantGunRoutine>g__Shoot|",   what: "elephant gun",   transpiler: nameof(TranspilerGun)),
+                (type: typeof(Hittable),        prefix: "<OnCollisionEnter>g__ParseCollision|", what: "ball collision", transpiler: nameof(TranspilerBall)),
             };
             foreach (var t in targets)
             {
@@ -64,7 +64,7 @@ namespace SbgShields
                         Plugin.Log.LogWarning($"Shield flag gate: no '{t.prefix}*' on {t.type.Name} (game updated?); a held bubble reflects the {t.what} for free.");
                         continue;
                     }
-                    harmony.Patch(m, transpiler: new HarmonyMethod(typeof(ShieldFlagPatches), nameof(Transpiler)));
+                    harmony.Patch(m, transpiler: new HarmonyMethod(typeof(ShieldFlagPatches), t.transpiler));
                     patched++;
                 }
                 catch (Exception e) { Plugin.Log.LogWarning($"Shield flag gate ({t.what}) failed: {e.Message}"); }
@@ -97,10 +97,23 @@ namespace SbgShields
         public static bool FlagReflects(PlayerInfo p) =>
             p.IsElectromagnetShieldActive && (Plugin.BubbleReflects.Value || !ModHandshake.GameplayEnabled);
 
-        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, MethodBase original)
+        /// <summary>
+        /// The ball's version: also true during a parry's reflect window, so a homing ball
+        /// that reaches the parrier's bubble goes back to whoever hit it. Guns keep the plain
+        /// rule: a parried shot is absorbed, there is nothing to send back.
+        /// </summary>
+        public static bool FlagReflectsBall(PlayerInfo p) => FlagReflects(p) || ParryReflect.IsSolid(p);
+
+        private static IEnumerable<CodeInstruction> TranspilerGun(IEnumerable<CodeInstruction> instructions, MethodBase original) =>
+            Reroute(instructions, original, nameof(FlagReflects));
+
+        private static IEnumerable<CodeInstruction> TranspilerBall(IEnumerable<CodeInstruction> instructions, MethodBase original) =>
+            Reroute(instructions, original, nameof(FlagReflectsBall));
+
+        private static IEnumerable<CodeInstruction> Reroute(IEnumerable<CodeInstruction> instructions, MethodBase original, string gateName)
         {
             var getter = AccessTools.PropertyGetter(typeof(PlayerInfo), nameof(PlayerInfo.IsElectromagnetShieldActive));
-            var gate   = AccessTools.Method(typeof(ShieldFlagPatches), nameof(FlagReflects));
+            var gate   = AccessTools.Method(typeof(ShieldFlagPatches), gateName);
             int n = 0;
             foreach (var ci in instructions)
             {

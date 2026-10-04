@@ -33,15 +33,9 @@ namespace SbgShields
             catch { pos = p.transform.position + Vector3.up * 0.9f; }
             Color skin = Skin.Of(p);
 
-            // The bubble itself goes hot, and stays drawn long enough to be seen doing it.
-            // Only when there is a flash to see: holding the body for nothing blocked a
-            // re-raise for half a second.
-            try
-            {
-                ShieldTint.ParryFlash(p);
-                if (Local.Is(p) && ShieldTint.Enabled && Plugin.ParryGlow.Value)
-                    Plugin.ExtendLinger(Plugin.ParryFlashSeconds + 0.05f);
-            }
+            // The bubble itself goes hot for the whole sequence. (How long the bubble stays is
+            // the sequence's business: ParrySequence and Plugin.StartParryHold.)
+            try { ShieldTint.ParryFlash(p); }
             catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Parry flash: " + e.Message); }
 
             if (Plugin.ParryBurst.Value)

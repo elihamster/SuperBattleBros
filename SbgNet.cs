@@ -30,13 +30,20 @@ namespace SbgShields
     /// </summary>
     internal static class SbgNet
     {
-        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3, Pips = 4 }
+        /// <summary>
+        /// Percent and Pips: a value. StarKo: an event. Parry: an event, A = the freeze length.
+        /// ParryStun: an event aimed at Target (the attacker), whose own game knocks them down.
+        /// ParryReflect: A = seconds the sender's bubble bounces homing items back.
+        /// </summary>
+        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3, Pips = 4, ParryStun = 5, ParryReflect = 6 }
+        private const byte MaxKind = (byte)Kind.ParryReflect;
 
         internal struct Msg : NetworkMessage
         {
             public byte  Kind;
-            public uint  NetId;
+            public uint  NetId;    // who the message is about: always the sender
             public float A;
+            public uint  Target;   // the other player involved, or 0
         }
 
         private static bool _serverReg, _clientReg, _serializersReg;
@@ -52,8 +59,8 @@ namespace SbgShields
         {
             if (_serializersReg) return;
             _serializersReg = true;
-            Writer<Msg>.write = (w, m) => { w.WriteByte(m.Kind); w.WriteUInt(m.NetId); w.WriteFloat(m.A); };
-            Reader<Msg>.read  = r => new Msg { Kind = r.ReadByte(), NetId = r.ReadUInt(), A = r.ReadFloat() };
+            Writer<Msg>.write = (w, m) => { w.WriteByte(m.Kind); w.WriteUInt(m.NetId); w.WriteFloat(m.A); w.WriteUInt(m.Target); };
+            Reader<Msg>.read  = r => new Msg { Kind = r.ReadByte(), NetId = r.ReadUInt(), A = r.ReadFloat(), Target = r.ReadUInt() };
         }
 
         internal static void Tick()
@@ -107,7 +114,12 @@ namespace SbgShields
         }
 
         /// <summary>Send a message about the local player. False if it could not go out.</summary>
-        internal static bool Send(Kind kind, float a)
+        internal static bool Send(Kind kind, float a) => SendInternal(kind, a, 0u);
+
+        /// <summary>Send a message about the local player that involves another player (the parry stun's target).</summary>
+        internal static bool SendTo(Kind kind, PlayerInfo target) => target != null && SendInternal(kind, 0f, target.netId);
+
+        private static bool SendInternal(Kind kind, float a, uint target)
         {
             if (!ModHandshake.AllPeersConfirmed) return false;   // never into a lobby that might hold a vanilla peer
             try
@@ -115,7 +127,7 @@ namespace SbgShields
                 if (!NetworkClient.isConnected) return false;
                 var local = GameManager.LocalPlayerInfo;
                 if (local == null) return false;
-                NetworkClient.Send(new Msg { Kind = (byte)kind, NetId = local.netId, A = a });
+                NetworkClient.Send(new Msg { Kind = (byte)kind, NetId = local.netId, A = a, Target = target });
                 return true;
             }
             catch (Exception e) { WarnOnce("send", e); return false; }
@@ -135,7 +147,8 @@ namespace SbgShields
             try
             {
                 if (conn == null) return;
-                if (m.Kind < (byte)Kind.Percent || m.Kind > (byte)Kind.Pips) return;
+                if (m.Kind < (byte)Kind.Percent || m.Kind > MaxKind) return;
+                if (m.Target != 0u && FindPlayer(m.Target) == null) return;   // a target that is not in this lobby
                 if (float.IsNaN(m.A) || float.IsInfinity(m.A)) return;
                 var p = FindPlayer(m.NetId);
                 if (p == null || p.connectionToClient != conn) return;   // only about yourself
@@ -176,10 +189,17 @@ namespace SbgShields
                         KillZone.PlayRemoteStar(p);
                         break;
                     case Kind.Parry:
-                        RemoteParryFeedback(p);
+                        RemoteParryFeedback(p, m.A);
                         break;
                     case Kind.Pips:
                         _remotePips[m.NetId] = Mathf.Clamp01(m.A);
+                        break;
+                    case Kind.ParryStun:
+                        var local = GameManager.LocalPlayerInfo;
+                        if (local != null && m.Target == local.netId) ParryStun.ApplyToLocal(p);
+                        break;
+                    case Kind.ParryReflect:
+                        ParryReflect.Mark(p, Mathf.Clamp(m.A, 0f, 2f));
                         break;
                 }
             }
@@ -202,9 +222,14 @@ namespace SbgShields
             try { return _remotePips.TryGetValue(p.netId, out fraction); } catch { return false; }
         }
 
-        private static void RemoteParryFeedback(PlayerInfo p)
+        private static void RemoteParryFeedback(PlayerInfo p, float freeze)
         {
-            // Another player's parry: the same flash, burst, sound and kick they saw, at their bubble.
+            // Another player's parry: the same flash, burst, sound and kick they saw, at their
+            // bubble, and their pose held for the impact frame. Their body is already still
+            // (their own game holds it); this stops the animation on our copy too.
+            try { HitStop.Begin(p, Mathf.Clamp(freeze, 0f, 0.5f)); }
+            catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Remote parry freeze: " + e.Message); }
+            try { ParryReflect.End(p); } catch { }
             try { ParryFx.Play(p); }
             catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Remote parry effects: " + e.Message); }
         }

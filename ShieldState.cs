@@ -630,7 +630,19 @@ namespace SbgShields
                     float armFor = Mathf.Max(Mathf.Max(0.05f, Plugin.ParryArmTime.Value), maxTti + 0.15f);
                     _parryThreat = _threatText.ToString();
                     _parryArmedUntil = Time.timeAsDouble + armFor;
-                    Plugin.Log.LogInfo($"Parry armed for {armFor:0.00}s: {_parryThreat}.");
+
+                    // A homing item locked on to you: the parry sends it back. The bubble has
+                    // to be a real wall on the machine that simulates the item (the host) at
+                    // the moment it arrives, so the window travels to everyone, and the bubble
+                    // stays drawn until then.
+                    string homing = null;
+                    if (_parryProjectile && Plugin.ParryReflectsHoming.Value && ParryReflect.HomingAt(player, centre, search, out homing))
+                    {
+                        ParryReflect.Mark(player, armFor);
+                        Plugin.ExtendLinger(armFor);
+                        try { SbgNet.Send(SbgNet.Kind.ParryReflect, armFor); } catch { }
+                    }
+                    Plugin.Log.LogInfo($"Parry armed for {armFor:0.00}s: {_parryThreat}{(homing != null ? $"; a {homing} will be sent back" : "")}.");
                 }
                 else
                     // Always on while the parry is being tuned: one line per release, naming what was
@@ -681,22 +693,54 @@ namespace SbgShields
             && Time.timeAsDouble - LastParryAt <= Mathf.Max(0f, Plugin.ParryCoverWindow.Value)
             && swingClass == _lastParrySwingClass;
 
-        private static void Parry(PlayerInfo player, string what, int cost, bool swingClass)
+        /// <param name="attacker">Who threw the parried hit, when known. They are stunned, unless their homing item is coming back at them.</param>
+        /// <param name="sentBack">The parried item is a homing item the bubble just reflected to its owner.</param>
+        private static void Parry(PlayerInfo player, string what, int cost, bool swingClass, PlayerInfo attacker, bool sentBack)
         {
             LastParryAt = Time.timeAsDouble;
             _lastParrySwingClass = swingClass;
             _parryArmedUntil = double.MinValue;   // one release, one parry
             if (Plugin.PerfectParryRefundsUse.Value) UseCooldownUntil = double.MinValue;
 
-            Plugin.Log.LogInfo($"PERFECT PARRY on {what} ({(Time.timeAsDouble - LoweredAt) * 1000.0:0} ms after release; armed by {_parryThreat}; would have cost {CostLabel(cost)}). {Pips} pips kept, shove cancelled.");
+            bool stun = !sentBack && attacker != null && !ReferenceEquals(attacker, player) && Plugin.ParryStunsAttacker.Value;
+            string by = attacker != null ? NameOf(attacker) : null;
+            Plugin.Log.LogInfo($"PERFECT PARRY on {what}{(by != null ? $" from {by}" : "")} ({(Time.timeAsDouble - LoweredAt) * 1000.0:0} ms after release; armed by {_parryThreat}; would have cost {CostLabel(cost)}). " +
+                               (sentBack ? "Sent back." : "Shove cancelled.") + (stun ? $" {by} is stunned." : ""));
 
-            // The parry has already happened by here. A failure in the effects or the
-            // message must not throw out of the TryKnockOut prefix: that runs inside the
-            // game's hit handler, and an exception there makes Mirror drop the connection.
+            // The parry has already happened by here. A failure in the sequence, the effects
+            // or the messages must not throw out of the TryKnockOut prefix: that runs inside
+            // the game's hit handler, and an exception there makes Mirror drop the connection.
+            try { ParrySequence.BeginLocal(player); }   // freeze, rooted hold, snap off
+            catch (Exception e) { Plugin.Log.LogWarning("Parry sequence failed: " + e.Message); }
+            try { ParryReflect.End(player); }           // one parry per read: the wall goes back to absorbing
+            catch { }
             try { ParryFx.Play(player); }   // flash, burst, sound, shake -- the same thing everyone else sees over SbgNet
             catch (Exception e) { Plugin.Log.LogWarning("Parry effects failed: " + e.Message); }
-            try { SbgNet.Send(SbgNet.Kind.Parry, 0f); }   // so everyone else sees and hears it too
+            try { SbgNet.Send(SbgNet.Kind.Parry, Plugin.ParryFreezeSeconds); }   // everyone else: the flash, and the freeze of our pose
             catch (Exception e) { Plugin.Log.LogWarning("Parry message failed: " + e.Message); }
+            if (stun)
+            {
+                try { SbgNet.SendTo(SbgNet.Kind.ParryStun, attacker); }   // the attacker's game knocks them down
+                catch (Exception e) { Plugin.Log.LogWarning("Parry stun message failed: " + e.Message); }
+            }
+        }
+
+        private static string NameOf(PlayerInfo p)
+        {
+            try { return p.PlayerId.PlayerNameNoRichText; } catch { return "a player"; }
+        }
+
+        /// <summary>
+        /// Our bubble bounced a homing item back, during a reflect window from a parry read.
+        /// The item never reached us, so no TryKnockOut ever runs: this is where the parry
+        /// happens. Called from the game's shield-hit effect on our own client.
+        /// </summary>
+        internal static void OnParryReflection(PlayerInfo player)
+        {
+            if (Plugin.WeActivated) return;                              // a held bubble absorbs; it does not parry
+            if (Time.timeAsDouble - LastParryAt < 0.3) return;           // the parry that already happened
+            if (!IsPerfectParry(1, swingClass: false)) return;
+            Parry(player, "a homing item", 1, swingClass: false, attacker: null, sentBack: true);
         }
 
         private static string CostLabel(int cost) =>
@@ -795,6 +839,18 @@ namespace SbgShields
                 return true;
             }
 
+            // A parry's stun on us, requested by our own game on the parrier's word (ParryStun).
+            // Not a hit: no pips, no percent, no launch, just a short knockdown.
+            if (ParryStun.Requesting)
+            {
+                float full = 3f;
+                try { full = GameManager.PlayerMovementSettings.KnockoutDuration; } catch { }
+                PendingHitstunMultiplier = Mathf.Max(0.05f, Plugin.ParryAttackerStun.Value) / Mathf.Max(0.1f, full);
+                PendingPercentGain = 0f;
+                _awaitingResult = true;
+                return true;
+            }
+
             bool targeted = PendingProjectileWasTargeted;
             PendingProjectileWasTargeted = false;
 
@@ -811,6 +867,14 @@ namespace SbgShields
                 // The vanilla magnet item's shield: leave it entirely to the game.
                 // A lingering shield is still ours, so it must not fall in here.
                 return true;
+            }
+
+            // The parry's impact frame: nothing touches the parrier. Not even an unblockable.
+            if (ParrySequence.LocalFrozen)
+            {
+                AddCorrection(-incomingVelocityChange);
+                Plugin.Log.LogInfo($"Hit {type} arrived during the parry freeze: nothing lands.");
+                return false;
             }
 
             // The game's own refusals come FIRST: a teammate's hit, comeback immunity,
@@ -845,7 +909,7 @@ namespace SbgShields
             // knocked out: an arm left over from before your own knockout is not a read.
             else if (!alreadyDown && IsPerfectParry(cost, swing))
             {
-                Parry(player, type.ToString(), cost, swing);
+                Parry(player, type.ToString(), cost, swing, responsiblePlayer, sentBack: false);
                 AddCorrection(-incomingVelocityChange);
                 return false;
             }
@@ -1296,7 +1360,7 @@ namespace SbgShields
             // A reflection never reaches TryKnockOut, so the parry check in
             // ResolveKnockout never sees it. Without this, timing a shield onto a rocket
             // would bounce it and still cost you the pips.
-            if (IsPerfectParry(cost, swingClass: false)) { Parry(player, "reflected " + what, cost, swingClass: false); return; }
+            if (IsPerfectParry(cost, swingClass: false)) { Parry(player, "reflected " + what, cost, swingClass: false, attacker: null, sentBack: true); return; }
 
             if (cost == CostFullBreak || cost >= Pips)
             {

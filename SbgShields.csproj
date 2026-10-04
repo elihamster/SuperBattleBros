@@ -127,6 +127,11 @@
       <HintPath>$(ManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Animator: the parry freeze holds the player's pose -->
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(ManagedDir)\UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <!-- Font.CreateDynamicFontFromOSFont -->
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>$(ManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
