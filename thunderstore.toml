@@ -1,0 +1,36 @@
+# Thunderstore CLI (tcli) project config. Used by publish.ps1, which uploads the zip
+# package.ps1 builds (it passes --file and --package-version, so the version here is
+# only a placeholder; Plugin.cs is the one place the version lives).
+# The upload token is NEVER stored here: publish.ps1 reads it from the
+# SBB_THUNDERSTORE_TOKEN user environment variable.
+
+[config]
+schemaVersion = "0.0.1"
+
+[package]
+namespace = "hamsterbby"
+name = "SuperBattleBros"
+versionNumber = "0.0.0"
+description = "Hold Shift to raise a bubble that absorbs hits, with a reach-based parry. Optional Smash-style percent, knockback, DI, teching and star KOs. Private lobbies only; everyone needs the mod. In testing."
+websiteUrl = "https://github.com/elihamster/SuperBattleBros"
+containsNsfwContent = false
+
+[package.dependencies]
+BepInEx-BepInExPack = "5.4.2305"
+AtomicStudio-ModConfig = "0.1.3"
+
+[build]
+icon = "./thunderstore/icon.png"
+readme = "./README.md"
+outdir = "./dist"
+
+[[build.copy]]
+source = "./bin/DevDebug/netstandard2.1/SbgShields.dll"
+target = "/"
+
+[publish]
+repository = "https://thunderstore.io"
+communities = [ "super-battle-golf" ]
+
+[publish.categories]
+super-battle-golf = [ "mods", "allclients" ]
