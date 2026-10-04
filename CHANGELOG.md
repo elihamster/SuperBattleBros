@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.37 (test build)
+
+- **Star KOs are credited in the game's kill feed** on every screen: whoever landed the launch that killed (the last hit that knocked you out, within 15 s), with that hit's icon. A star KO nobody caused shows as a self-elimination. The host posts it. `Percent.KillFeedStarKo`.
+
 ## 0.7.36 (test build)
 
 Smoother play, and numbers for balancing.

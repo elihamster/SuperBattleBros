@@ -121,7 +121,15 @@ namespace SbgShields
             if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"STAR KO at {ShieldState.Percent:0}% (height {pos.y:0.0}).");
 
             PlayStar(p, pos);
-            SbgNet.Send(SbgNet.Kind.StarKo, 0f);   // everyone else draws it too
+            // Everyone else draws it too, and the host puts it in the game's kill feed with
+            // whoever landed the launch that killed (the last hit that knocked us out).
+            var by = ShieldState.LastHitBy;
+            bool credited = by != null && !ReferenceEquals(by, p) && Time.timeAsDouble - ShieldState.LastHitAt < 15.0;
+            SbgNet.SendStarKo(credited ? by : null, ShieldState.LastHitType);
+            string byName = null;
+            if (credited) { try { byName = by.PlayerId.PlayerNameNoRichText; } catch { byName = "someone"; } }
+            Plugin.Log.LogInfo(credited ? $"STAR KO by {byName} ({ShieldState.LastHitType})." : "STAR KO (self).");
+            ShieldState.LastHitBy = null;
 
             ShieldState.Percent = Mathf.Max(0f, Plugin.PercentAfterKillZoneDeath.Value);
 

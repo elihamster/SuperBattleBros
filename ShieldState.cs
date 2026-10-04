@@ -857,6 +857,7 @@ namespace SbgShields
         {
             ClearPendingHitOnly();
             _pendingType = type;
+            _pendingResponsible = responsiblePlayer;
 
             // Standing down (public lobby, version mismatch): hand the hit straight
             // back to the game. This has to be here, above the absorb branch, or the
@@ -1100,7 +1101,13 @@ namespace SbgShields
         // ---- Per-hit bookkeeping for OnKnockoutResolved -------------------------
 
         private static KnockoutType _pendingType;
+        private static PlayerInfo   _pendingResponsible;
         private static bool   _launchBegunThisHit;
+
+        // ---- Who sent you flying: the credit for a star KO ------------------------
+        internal static PlayerInfo   LastHitBy;
+        internal static KnockoutType LastHitType;
+        internal static double       LastHitAt = double.MinValue;
         private static string _pendingLandedLine;
 
         /// <summary>
@@ -1313,6 +1320,12 @@ namespace SbgShields
             if (knockedOut)
             {
                 if (!ParryStun.Requesting) Stats.Landed++; else Stats.ParriedBy++;
+                if (!ParryStun.Requesting)
+                {
+                    LastHitBy   = _pendingResponsible;
+                    LastHitType = _pendingType;
+                    LastHitAt   = Time.timeAsDouble;
+                }
                 if (PendingPercentGain > 0f) AddPercent(PendingPercentGain);
                 if (_pendingLandedLine != null) Plugin.Log.LogInfo(_pendingLandedLine);
                 if (InPlayableHole && Plugin.PercentEnabled.Value && Plugin.KillZoneEnabled.Value && Percent >= Plugin.KillPercent.Value && !KillZone.IsArmed)

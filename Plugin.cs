@@ -19,7 +19,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.36";
+        public const string Version = "0.7.37";
 
         internal static ManualLogSource Log;
 
@@ -102,6 +102,7 @@ namespace SbgShields
         internal static ConfigEntry<float> KillZoneMaxRiseTime;
         internal static ConfigEntry<float> KillZoneDeathLinger;
         internal static ConfigEntry<bool>  KillZoneBoom;
+        internal static ConfigEntry<bool>  KillFeedStarKo;
         internal static ConfigEntry<float> KillZoneBoomCarry;
 
         // Launch
@@ -569,6 +570,9 @@ namespace SbgShields
                 "Seconds you stay gone after the star flash before respawning. The camera holds on the spot.");
             KillZoneBoom = Config.Bind("Percent", "KillZoneBoom", true,
                 "Play the shield-explosion boom and a heavy screenshake on a star KO. Placeholder until custom SFX.");
+            KillFeedStarKo = Config.Bind("Percent", "KillFeedStarKo", true,
+                "Put every star KO in the game's kill feed, crediting whoever landed the launch that killed (the host posts it, so " +
+                "the host's setting is the one that counts).");
             KillZoneBoomCarry = Config.Bind("Percent", "KillZoneBoomCarry", 400f,
                 "Metres out to which a star KO is heard (the game's own sound fades within a few dozen). Everyone in that range " +
                 "hears the boom from the right direction. 0 = the game's sound only.");

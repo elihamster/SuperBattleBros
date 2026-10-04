@@ -134,6 +134,9 @@ namespace SbgShields
         /// <summary>Send a message about the local player. False if it could not go out.</summary>
         internal static bool Send(Kind kind, float a) => SendInternal(kind, a, 0u);
 
+        /// <summary>Our star KO: A carries the killing hit's type, Target the player credited with it (0 = nobody).</summary>
+        internal static bool SendStarKo(PlayerInfo by, KnockoutType type) => SendInternal(Kind.StarKo, (float)(int)type, by != null ? by.netId : 0u);
+
         /// <summary>Send a message about the local player that involves another player (the parry stun's target).</summary>
         internal static bool SendTo(Kind kind, PlayerInfo target) => target != null && SendInternal(kind, 0f, target.netId);
 
@@ -172,6 +175,7 @@ namespace SbgShields
                 if (p == null || p.connectionToClient != conn) return;   // only about yourself
                 if (!ModHandshake.GameplayEnabled) return;
                 m.A = Mathf.Clamp(m.A, 0f, 1000f);
+                if ((Kind)m.Kind == Kind.StarKo) Credits.PostStarKo(p, m.Target != 0u ? FindPlayer(m.Target) : null, (KnockoutType)(int)m.A);
                 Relay(m);
             }
             catch (Exception e) { WarnOnce("server", e); }
