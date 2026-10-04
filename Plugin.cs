@@ -5,6 +5,7 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.InputSystem;
 
 namespace SbgShields
@@ -18,7 +19,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.33";
+        public const string Version = "0.7.34";
 
         internal static ManualLogSource Log;
 
@@ -250,12 +251,6 @@ namespace SbgShields
             }
         }
 
-        /// <summary>The plugin is a MonoBehaviour; lend that to static helpers that need a coroutine.</summary>
-        internal static void RunCoroutine(IEnumerator routine)
-        {
-            if (_instance != null && routine != null) _instance.StartCoroutine(routine);
-        }
-
         // Direct access to PlayerInfo's private activation timestamp. Keeping this
         // fresh is what makes ShouldBeActive() keep returning true, so we never
         // have to patch the local function itself.
@@ -265,7 +260,9 @@ namespace SbgShields
         private static bool   _weActivated;
         internal static bool  WeActivated => _weActivated;
         internal static double LastActivationTime => _lastActivationTime;
-        internal static double LastOurShieldReleaseTime = double.MinValue;
+
+        /// <summary>How long a parry's flash lasts: the bubble, its halo and the HUD flare all read this one number.</summary>
+        internal static float ParryFlashSeconds => Mathf.Max(0.05f, ParryGlowDuration.Value);
 
         /// <summary>
         /// The bubble's body outlives the keypress by ParryLinger, cosmetically. WeActivated
@@ -275,7 +272,16 @@ namespace SbgShields
         /// </summary>
         private static double _lingerUntil = double.MinValue;
 
-        internal static bool ShieldLingering => Time.timeAsDouble < _lingerUntil;
+        /// <summary>
+        /// True from the release until the linger is actually cancelled. Not a clock
+        /// comparison: hits and physics run before Plugin.Update, so for up to a frame
+        /// after the clock ran out the flag was still up while this said "not lingering",
+        /// and the hit was treated as the magnet item's (a free block).
+        /// </summary>
+        internal static bool ShieldLingering => _lingerUntil > double.MinValue;
+
+        /// <summary>Set around our own LocalPlayerActivateElectromagnetShield call, so the item hook can tell it apart.</summary>
+        internal static bool ActivatingOurs;
 
         private void Awake()
         {
@@ -291,13 +297,14 @@ namespace SbgShields
             catch (Exception e)
             {
                 Log.LogError("Could not bind the shield activation timestamp field. " +
-                             "The game probably updated and renamed it. " + e);
+                             "The game probably updated and renamed it. The mod is OFF. " + e);
+                enabled = false;   // no Update, no OnGUI: nothing runs against a missing field
                 return;
             }
 
             _instance = this;
             _harmony = new Harmony(Guid);
-            _harmony.PatchAll();
+            int failed = PatchEachClass(_harmony);
             ShieldFlagPatches.ApplyAll(_harmony);   // by hand: each target degrades to a warning if the game renamed it
 
             ShieldState.Pips = MaxPips.Value;
@@ -306,13 +313,49 @@ namespace SbgShields
             ModHandshake.Reset("startup");
             try { CourseManager.MatchStateChanged += OnMatchStateChanged; }
             catch (Exception e) { Log.LogWarning("Could not subscribe to MatchStateChanged; pips will not reset per hole. " + e.Message); }
+            SceneManager.activeSceneChanged += OnActiveSceneChanged;
 
 #if SBG_DEV
             const string buildKind = "DEV build: chat commands and debug keys compiled in";
 #else
             const string buildKind = "RELEASE build: no debug tooling";
 #endif
-            Log.LogInfo($"{Name} {Version} loaded ({buildKind}). Hold Left Shift to shield. Pips={MaxPips.Value}, break cooldown={BreakCooldown.Value}s.");
+            Log.LogInfo($"{Name} {Version} loaded ({buildKind}). Hold Left Shift to shield. Pips={MaxPips.Value}, break cooldown={BreakCooldown.Value}s." +
+                        (failed > 0 ? $" {failed} patch class(es) FAILED to apply; see the warnings above." : ""));
+        }
+
+        /// <summary>
+        /// PatchAll aborts on the first class that fails, leaving every later class
+        /// unpatched and Awake half done. Patch class by class instead, so a game update
+        /// that renames one method costs that one feature, with a warning naming it.
+        /// </summary>
+        private static int PatchEachClass(Harmony harmony)
+        {
+            int failed = 0;
+            foreach (var type in AccessTools.GetTypesFromAssembly(typeof(Plugin).Assembly))
+            {
+                try
+                {
+                    if (!type.IsDefined(typeof(HarmonyPatch), false)) continue;
+                    harmony.CreateClassProcessor(type).Patch();
+                }
+                catch (Exception e)
+                {
+                    failed++;
+                    Log.LogWarning($"Patch {type.Name} failed and is OFF: {(e.InnerException ?? e).Message}");
+                }
+            }
+            return failed;
+        }
+
+        /// <summary>
+        /// A new scene (a course, the range, the lobby hub) means everyone reloaded and
+        /// may have missed each other's handshake while loading. Re-arm ours.
+        /// </summary>
+        private static void OnActiveSceneChanged(Scene from, Scene to)
+        {
+            try { ModHandshake.Reset("scene " + to.name); }
+            catch (Exception e) { Log.LogWarning("Scene change handling failed: " + e.Message); }
         }
 
         private void BindConfig()
@@ -662,9 +705,10 @@ namespace SbgShields
                 "A hit that breaks your bubble knocks you out (the bounce) even if the game's comeback shield is up. Off = vanilla " +
                 "behaviour, where comeback protection refuses the knockout and the break costs you only the bubble.");
             RequireAllPlayersModded = Config.Bind("Network", "RequireAllPlayersModded", true,
-                "Stand down (vanilla rules, no shield, no percent) unless every other player in the lobby is running this exact version. " +
-                "Players announce themselves over the game's own chat channel; anyone without the mod sees one line of plain text saying who is modded. " +
-                "NOTE: this runs on your machine, so it stops accidents and version drift, not a determined cheater -- only a server-side check could do that.");
+                "Every player needs this exact version. As HOST, anyone who joins without the mod (silent past HandshakeTimeout plus a few " +
+                "seconds) or on another version is removed from the lobby, with a chat line saying why. As a client, the mod stands down " +
+                "(vanilla rules) if the lobby cannot be vouched for. Players announce themselves over the game's own chat channel. " +
+                "NOTE: this runs on the players' machines, so it stops accidents and version drift, not a determined cheater.");
             MismatchPopupDuration = Config.Bind("Network", "MismatchPopupDuration", 12f,
                 "Seconds the big version-mismatch panel stays up before shrinking to a single line at the top of the screen.");
             HandshakeTimeout = Config.Bind("Network", "HandshakeTimeout", 12f,
@@ -746,7 +790,8 @@ namespace SbgShields
                 "Text sits above its own baseline, so a bottom-aligned number reads high next to a circle.");
 
             ConfigVersion = Config.Bind("Meta", "ConfigVersion", "",
-                "Internal. When the mod version changes, all settings are reset to the new defaults so retunes actually land.");
+                "Internal: the mod version this config was last used with. On an update, only the settings whose default changed since " +
+                "that version are reset to their new default; everything else you tuned is kept.");
 
             // Off by default in every build. In a Release build the cheat tooling below
             // is not merely disabled, it is not compiled in at all -- see SBG_DEV.
@@ -773,71 +818,58 @@ namespace SbgShields
         }
 
         /// <summary>
-        /// Entries whose DEFAULT changed in this version. Only these are reset when the
-        /// version changes; everything the user tuned in game is left alone. Clear the
-        /// list on a drop that changes no defaults, fill it on one that does.
+        /// Which settings had their DEFAULT changed, by the version that changed them.
+        /// When a player updates, only the entries changed in versions newer than the one
+        /// they last ran are reset to the new default; everything else they tuned stays.
+        /// Someone skipping versions still gets every retune they missed. Add a row on
+        /// any drop that changes a default; never edit an old row.
+        ///
+        /// Until 0.7.34 this was one flat list that was never cleared, so every update
+        /// reset about 25 settings, VerboseLogging included, whatever had changed.
         /// </summary>
-        private static readonly string[] RetunedThisVersion =
+        private static readonly (string version, string[] keys)[] RetuneHistory =
         {
-            // Keep this list in step with Version above whenever a default changes.
-            // 0.5.8: percent economy, death timing, the HUD shake block.
-            "Percent.PercentGainOnFullBreak", "Percent.PercentReductionBetweenHoles",
-            "Percent.PercentAfterKillZoneDeath", "Percent.KillZoneDeathLinger",
-            "HUD.PercentShakeDuration", "HUD.PercentShakePixels", "HUD.PercentShakePunch",
-            // 0.6.1: debug tooling now ships off (and out of Release builds entirely).
-            "Debug.VerboseLogging",
-            // 0.6.3: shake rework replaced the old idle/hit split.
-            "HUD.PercentShakeDuration", "HUD.PercentShakePixels", "HUD.PercentShakePunch",
-            "HUD.PercentShakeSpeed",
-            // 0.6.6: drag was killing horizontal travel.
-            "Launch.LaunchDrag",
-            // 0.6.9: knockback curve now runs to the kill line; the old *AtMax entries are gone.
-            "Percent.PercentForMaxScaling",
-            // 0.7.0: hang time off by default.
-            "Launch.LaunchHangTime",
-            // 0.7.1: air recovery is gone; hitstun now SHRINKS with percent instead.
-            "Percent.HitstunMultiplierAtMax",
-            // 0.7.4: launches carry further before the cap turns reach into altitude.
-            "Launch.MaxHorizontalLaunchSpeed", "Launch.HorizontalMultiplierAtKill",
-            // 0.7.8: knockback now saturates at PercentForMaxScaling. ForceMultiplierAtKill and
-            // HorizontalMultiplierAtKill were replaced by *AtMax with new defaults (new keys, no reset needed).
-            // The parry is armed by reach now, so the linger is off; PerfectParryWindow no longer exists.
-            "Parry.ParryLinger",
-            // Also 0.7.8: PartialBreakLaunches deleted (it was the instant-wake-up bug behind a toggle).
-            // New entries: PercentEnabled, hit categories, DI, tech, PipWarning, RageVisual.
-            // Break rework: stun-in-place and its six knobs replaced by BreakBounceSpeed / BreakStunMultiplier /
-            // BreakSoundCarry; the cooldown is now the punish and went 8 -> 10.
-            "Shield.BreakCooldown",
-            // 0.7.9: no defaults changed. Parry scan fix, bright pip blink, handshake nudge + diagnostics, HUD reason line.
-            // 0.7.14: the game's real knockback table (settings dump) showed guns are its strongest hits; bullets 0.85 -> 0.65.
-            "Launch.BulletForceScale",
-            // 0.7.16: ten pips drawn as five circles; PercentPerPip halved to keep percent the same.
-            "Shield.MaxPips", "Percent.PercentPerPip",
-            // 0.7.17: hang time on, ramping from 65% (was off, gated at 125%).
-            "Launch.LaunchHangTime", "Launch.CloudHitMinPercent",
-            // 0.7.19: the linger is cosmetic now and back on, so a tap shows the bubble's intro.
-            "Parry.ParryLinger",
-            // 0.7.22: worn bubbles thin instead of whitening; whiteness 0.75 -> 0.3.
-            "Bubble.BubbleWornWhiteness",
-            // 0.7.23: costs halved back to the user's numbers (a rocket is a circle and a half); per-pip percent 2 -> 4
-            // so a hit is worth the same. Parry flash 0.35 -> 0.45 now that the body stays for it.
-            "Percent.PercentPerPip", "Parry.ParryGlowDuration",
-            // 0.7.24: use cooldown 1 -> 3, break cooldown 10 -> 15 (user). Glow entries are new keys.
-            "Shield.UseCooldown", "Shield.BreakCooldown",
-            // 0.7.28: DI window 0.15 -> 0.2 (user).
-            "Launch.DIWindow",
-            // 0.7.29: tech window 0.2 -> 0.3 for latency (user). KillZoneBoomCarry is a new key.
-            "Launch.TechWindow",
+            ("0.5.8",  new[] { "Percent.PercentGainOnFullBreak", "Percent.PercentReductionBetweenHoles", "Percent.PercentAfterKillZoneDeath",
+                               "Percent.KillZoneDeathLinger", "HUD.PercentShakeDuration", "HUD.PercentShakePixels", "HUD.PercentShakePunch" }),
+            ("0.6.1",  new[] { "Debug.VerboseLogging" }),
+            ("0.6.3",  new[] { "HUD.PercentShakeDuration", "HUD.PercentShakePixels", "HUD.PercentShakePunch", "HUD.PercentShakeSpeed" }),
+            ("0.6.6",  new[] { "Launch.LaunchDrag" }),
+            ("0.6.9",  new[] { "Percent.PercentForMaxScaling" }),
+            ("0.7.0",  new[] { "Launch.LaunchHangTime" }),
+            ("0.7.1",  new[] { "Percent.HitstunMultiplierAtMax" }),
+            ("0.7.4",  new[] { "Launch.MaxHorizontalLaunchSpeed" }),
+            ("0.7.8",  new[] { "Parry.ParryLinger", "Shield.BreakCooldown" }),
+            ("0.7.14", new[] { "Launch.BulletForceScale" }),
+            ("0.7.16", new[] { "Shield.MaxPips", "Percent.PercentPerPip" }),
+            ("0.7.17", new[] { "Launch.LaunchHangTime", "Launch.CloudHitMinPercent" }),
+            ("0.7.19", new[] { "Parry.ParryLinger" }),
+            ("0.7.22", new[] { "Bubble.BubbleWornWhiteness" }),
+            ("0.7.23", new[] { "Percent.PercentPerPip", "Parry.ParryGlowDuration" }),
+            ("0.7.24", new[] { "Shield.UseCooldown", "Shield.BreakCooldown" }),
+            ("0.7.28", new[] { "Launch.DIWindow" }),
+            ("0.7.29", new[] { "Launch.TechWindow" }),
         };
+
+        private static System.Version ParseVersion(string s) =>
+            System.Version.TryParse((s ?? "").Trim(), out var v) ? v : new System.Version(0, 0, 0);
 
         private void ResetConfigIfVersionChanged()
         {
             if (ConfigVersion.Value == Version) return;
+            var stored  = ParseVersion(ConfigVersion.Value);
+            var current = ParseVersion(Version);
+            var due = new System.Collections.Generic.HashSet<string>();
+            foreach (var row in RetuneHistory)
+            {
+                var v = ParseVersion(row.version);
+                if (v > stored && v <= current) foreach (var k in row.keys) due.Add(k);
+            }
+
             var reset = new System.Collections.Generic.List<string>();
             foreach (var kv in Config)
             {
                 string key = kv.Key.Section + "." + kv.Key.Key;
-                if (Array.IndexOf(RetunedThisVersion, key) < 0) continue;
+                if (!due.Contains(key)) continue;
                 var e = kv.Value;
                 try
                 {
@@ -845,18 +877,20 @@ namespace SbgShields
                 }
                 catch { }
             }
+            string from = string.IsNullOrEmpty(ConfigVersion.Value) ? "a fresh or pre-tracking config" : ConfigVersion.Value;
             ConfigVersion.Value = Version;
             Config.Save();
             Log.LogInfo(reset.Count == 0
-                ? $"Config version now {Version}; no retuned entries needed resetting."
-                : $"Config version now {Version}; reset to new defaults: {string.Join(", ", reset)}.");
+                ? $"Config version {from} -> {Version}; no retuned entries needed resetting."
+                : $"Config version {from} -> {Version}; reset to new defaults: {string.Join(", ", reset)}.");
         }
 
         private void OnDestroy()
         {
-            // Order matters: put the game's own materials back before we unpatch, or
-            // the tinted copies stay on pooled prefabs with nothing left to fix them.
-            try { ReleaseShield(); }        catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
+            // Order matters: drop the bubble first (no linger: Update never runs again),
+            // then put the game's own materials back before we unpatch, or the tinted
+            // copies stay on pooled prefabs with nothing left to fix them.
+            try { DropShieldQuietly("unload"); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { ShieldTint.DestroyAll(); } catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { LaunchVfx.DestroyAll(); }  catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { KillZone.DestroyAll(); }   catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
@@ -866,34 +900,68 @@ namespace SbgShields
             try { SbgNet.Shutdown(); }           catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { Hud.Shutdown(); }          catch (Exception e) { Log.LogWarning("Unload: " + e.Message); }
             try { CourseManager.MatchStateChanged -= OnMatchStateChanged; } catch { }
+            try { SceneManager.activeSceneChanged -= OnActiveSceneChanged; } catch { }
             _harmony?.UnpatchSelf();
         }
 
+        /// <summary>
+        /// Every hole starts at TeeOff, always entered from the hole overview. The first
+        /// hole of a match (course index 0) is a full reset; later holes keep what the
+        /// between-holes rules keep. Keying the match start on "from Initializing" never
+        /// fired: TeeOff is never entered from Initializing.
+        /// </summary>
         private void OnMatchStateChanged(MatchState from, MatchState to)
         {
             if (to != MatchState.TeeOff || from == MatchState.TeeOff) return;
-
-            // Coming from Initializing means a whole new match (or the first hole after
-            // the lobby / driving range): start clean rather than carrying anything in.
-            if (from == MatchState.Initializing) { ShieldState.FullReset("match start"); ModHandshake.Reset("match start"); Launch.Cancel(); }
+            int hole = -1;
+            try { hole = CourseManager.CurrentHoleCourseIndex; } catch { }
+            if (hole <= 0) ShieldState.FullReset("match start");
             else ShieldState.ResetForNewHole();
+        }
+
+        // One failure per subsystem is logged in full; after that it stays quiet so a
+        // broken module cannot flood the log, and the others keep running.
+        private static readonly System.Collections.Generic.HashSet<string> _failedOnce = new System.Collections.Generic.HashSet<string>();
+
+        private static void Safe(string name, Action a)
+        {
+            try { a(); }
+            catch (Exception e)
+            {
+                if (_failedOnce.Add(name)) Log.LogError($"{name} failed (logged once, the rest of the mod keeps running): {e}");
+            }
+        }
+
+        private static readonly Action _tickNet = SbgNet.Tick, _tickHandshake = ModHandshake.Tick, _tickState = ShieldState.Tick,
+                                        _tickTint = ShieldTint.Tick, _tickLaunchVfx = LaunchVfx.Tick, _tickKillZone = KillZone.Tick,
+                                        _tickFlicker = ImmunityFlicker.Tick, _tickLinger = TickLinger;
+
+        private static void TickLinger()
+        {
+            if (_lingerUntil > double.MinValue && Time.timeAsDouble >= _lingerUntil) CancelLingeringShield("linger over");
         }
 
         private void Update()
         {
 #if SBG_DEV
-            PollDebugConfig();
-            SettingsDump.Tick();
+            Safe("Debug config", PollDebugConfig);
+            Safe("Settings dump", SettingsDump.Tick);
 #endif
-            ModHandshake.Tick();
-            if (_lingerUntil > double.MinValue && Time.timeAsDouble >= _lingerUntil) CancelLingeringShield("linger over");
-            ShieldState.Tick();
-            ShieldTint.Tick();
-            LaunchVfx.Tick();
-            KillZone.Tick();
-            ImmunityFlicker.Tick();
-            SbgNet.Tick();
+            // The network first: handlers must be registered before the handshake can
+            // announce, or the first replies arrive with nobody listening.
+            Safe("SbgNet", _tickNet);
+            Safe("Handshake", _tickHandshake);
+            Safe("Linger", _tickLinger);
+            Safe("ShieldState", _tickState);
+            Safe("ShieldTint", _tickTint);
+            Safe("LaunchVfx", _tickLaunchVfx);
+            Safe("KillZone", _tickKillZone);
+            Safe("ImmunityFlicker", _tickFlicker);
+            Safe("Shift", TickShift);
+        }
 
+        private static void TickShift()
+        {
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -925,20 +993,33 @@ namespace SbgShields
             }
 #endif
 
-            bool held = keyboard.leftShiftKey.isPressed;
-            if (keyboard.leftShiftKey.wasPressedThisFrame) ShieldState.NoteShieldPress(player);   // tech input
-
-            // Comeback bubble came up while shielding: drop it, the pips are wasted otherwise.
-            if (_weActivated && BlockActivationDuringImmunity.Value && HasKnockoutImmunity(player))
+            bool held    = keyboard.leftShiftKey.isPressed;
+            bool pressed = keyboard.leftShiftKey.wasPressedThisFrame;
+            if (pressed)
             {
-                if (VerboseLogging.Value) Log.LogInfo("Comeback immunity is up; dropping the shield.");
-                ReleaseShield();
+                ShieldState.NoteShieldPress(player);   // tech input
+                _refusalLoggedThisPress = false;       // one "Shift ignored" line per press
             }
 
-            // Climbing into a cart, springing, scoring (the dance), or a new hole's countdown starting with the shield up drops it.
-            if (_weActivated && (IsInGolfCart(player) || InTeeOffCountdown() || InVictoryDance(player) ||
-                (BlockActivationDuringSpringBoots.Value && IsUsingSpringBoots(player))))
-                ReleaseShield();
+            // The game forced the bubble down: drop it with no parry and no linger. Only
+            // letting go of the key is a deliberate release.
+            if (_weActivated)
+            {
+                string forced = null;
+                if (BlockActivationDuringImmunity.Value && HasKnockoutImmunity(player)) forced = "comeback shield up";
+                else if (IsInGolfCart(player)) forced = "entered a cart";
+                else if (InTeeOffCountdown()) forced = "tee-off countdown";
+                else if (InVictoryDance(player)) forced = "victory dance";
+                else if (BlockActivationDuringSpringBoots.Value && IsUsingSpringBoots(player)) forced = "spring boots";
+                if (forced != null) ForceDrop(forced);
+            }
+
+            // A fresh press while the released bubble is still lingering: the linger is
+            // cosmetic, so it must not stand between you and a new raise (after a parry
+            // the cooldown is refunded and you may raise at once). End it only if the
+            // raise would actually happen; otherwise the press would just cut the fade.
+            if (pressed && !_weActivated && ShieldLingering && player.IsElectromagnetShieldActive && CouldRaiseNow(player))
+                CancelLingeringShield("re-raised");
 
             if (held)
             {
@@ -956,7 +1037,12 @@ namespace SbgShields
         private void OnGUI()
         {
             try { Hud.Draw(); }
-            catch (Exception e) { if (VerboseLogging.Value) Log.LogWarning("HUD draw error: " + e.Message); }
+            catch (Exception e)
+            {
+                // The first failure of each kind is always logged in full; repeats only when verbose.
+                if (_failedOnce.Add("HUD:" + e.GetType().Name)) Log.LogError("HUD draw failed: " + e);
+                else if (VerboseLogging.Value) Log.LogWarning("HUD draw error: " + e.Message);
+            }
         }
 
         internal static bool IsInGolfCart(PlayerInfo player)
@@ -993,6 +1079,7 @@ namespace SbgShields
             if (InTeeOffCountdown()) { why = "tee-off countdown"; return true; }
             if (KillZone.IsLingering) { why = "dead"; return true; }
             if (InVictoryDance(player)) { why = "victory dance"; return true; }
+            if (IsGiant(player)) { why = "giant form"; return true; }
             if (IsInGolfCart(player)) { why = "in a cart"; return true; }
             var movement = player.Movement;
             if (movement != null)
@@ -1032,9 +1119,6 @@ namespace SbgShields
             try { return CourseManager.MatchState == MatchState.TeeOff; } catch { return false; }
         }
 
-        /// <summary>Any full-screen or modal UI that eats gameplay input.</summary>
-        internal static bool AnyMenuOpen() => OpenMenuName() != null;
-
         /// <summary>The game's own knockout-immunity bubble: blue recovery protection or gold repeat protection.</summary>
         internal static bool HasKnockoutImmunity(PlayerInfo player)
         {
@@ -1059,6 +1143,15 @@ namespace SbgShields
             catch { return false; }
         }
 
+        /// <summary>
+        /// Jumbo Burger giant. The bubble stays off: eating the burger with it up made the
+        /// game explode it onto everyone nearby, and a 1.25 m bubble inside a giant is no shield.
+        /// </summary>
+        internal static bool IsGiant(PlayerInfo player)
+        {
+            try { return player != null && player.IsInJumboBurgerGiantForm; } catch { return false; }
+        }
+
         internal static bool IsUsingSpringBoots(PlayerInfo player)
         {
             try
@@ -1069,20 +1162,18 @@ namespace SbgShields
             catch { return false; }
         }
 
-        private static string _lastRefusal;
-        private static double _lastRefusalAt = double.MinValue;
+        private static bool _refusalLoggedThisPress;
 
         /// <summary>
-        /// Always on, cheap: one line per distinct reason (and at most one every two
-        /// seconds) when Shift does nothing. "My shield stopped working" is otherwise
-        /// invisible in the log, because the HUD's own hidden-reason line deliberately
-        /// leaves out comeback immunity and the cooldowns.
+        /// Always on, cheap: one line per Shift press that does nothing, with the reason.
+        /// "My shield stopped working" is otherwise invisible in the log, because the
+        /// HUD's own hidden-reason line deliberately leaves out comeback immunity and the
+        /// cooldowns. Holding the key does not repeat it.
         /// </summary>
         private static void LogRefusal(string why, PlayerInfo player)
         {
-            double now = Time.timeAsDouble;
-            if (why == _lastRefusal && now - _lastRefusalAt < 2.0) return;
-            _lastRefusal = why; _lastRefusalAt = now;
+            if (_refusalLoggedThisPress) return;
+            _refusalLoggedThisPress = true;
             string extra = "";
             try
             {
@@ -1095,7 +1186,13 @@ namespace SbgShields
             Log.LogInfo($"Shift ignored: {why}{extra}.");
         }
 
-        private void TryActivate(PlayerInfo player)
+        /// <summary>Every gate TryActivate checks, without logging: would a raise succeed right now?</summary>
+        private static bool CouldRaiseNow(PlayerInfo player) =>
+            Time.timeAsDouble - _lastActivationTime >= ActivationCooldown.Value &&
+            ShieldState.CanActivate(out _) &&
+            !ActivationBlockedByState(player, false, out _);
+
+        private static void TryActivate(PlayerInfo player)
         {
             double since = Time.timeAsDouble - _lastActivationTime;
             if (since < ActivationCooldown.Value) return;
@@ -1110,13 +1207,16 @@ namespace SbgShields
             // inside this call, and the tint/rooting patches check WeActivated.
             _weActivated = true;
             _lastActivationTime = Time.timeAsDouble;
-            player.LocalPlayerActivateElectromagnetShield(useId);
+            ActivatingOurs = true;
+            try { player.LocalPlayerActivateElectromagnetShield(useId); }
+            finally { ActivatingOurs = false; }
 
             if (!player.IsElectromagnetShieldActive) { _weActivated = false; return; }
 
             if (VerboseLogging.Value) Log.LogInfo($"Shield up ({ShieldState.Pips} pips).");
         }
 
+        /// <summary>The key went up: a deliberate release. Arms the parry, starts the use cooldown and the linger.</summary>
         private static void ReleaseShield()
         {
             if (!_weActivated) return;
@@ -1124,11 +1224,7 @@ namespace SbgShields
             var player = GameManager.LocalPlayerInfo;
             if (player == null || !player.IsElectromagnetShieldActive) { _weActivated = false; return; }
 
-            // explode: false is important. The vanilla cancel-with-explode path fires
-            // an AoE HitWithItem on everyone nearby. Cancel BEFORE clearing the flag so
-            // the vfx hook still knows this was our shield.
             _weActivated = false;
-            LastOurShieldReleaseTime = Time.timeAsDouble;
             ShieldState.LoweredAt = Time.timeAsDouble;
             ShieldState.ArmParryOnRelease(player);       // looks around the bubble while its collider still exists
             ShieldState.OnShieldReleased();
@@ -1142,6 +1238,21 @@ namespace SbgShields
             }
 
             CancelLingeringShield("released");
+        }
+
+        /// <summary>
+        /// The game took the bubble away (comeback shield, a cart, the countdown, the
+        /// victory dance, spring boots, giant form, the magnet item). Not a read, so no
+        /// parry is armed and nothing lingers; the use cooldown still runs, because every
+        /// raise is a commitment.
+        /// </summary>
+        internal static void ForceDrop(string why)
+        {
+            bool wasOurs = _weActivated || ShieldLingering;
+            ShieldState.DisarmParry();
+            DropShieldQuietly(why);
+            if (wasOurs) ShieldState.OnShieldReleased();
+            Log.LogInfo($"Bubble dropped: {why}.");
         }
 
         /// <summary>
@@ -1181,9 +1292,33 @@ namespace SbgShields
             // explode: false is important. The vanilla cancel-with-explode path fires
             // an AoE HitWithItem on everyone nearby.
             player.LocalPlayerCancelElectromagnetShield(false);
-            LastOurShieldReleaseTime = Time.timeAsDouble;
 
             if (VerboseLogging.Value) Log.LogInfo($"Shield down ({why}).");
+        }
+
+        /// <summary>
+        /// Takes the bubble off instantly on every screen: no soft release dissolve. The
+        /// same three writes as the game's LocalPlayerCancelElectromagnetShield, but with
+        /// the "exploded" flag set, which is what makes every client skip the dissolve
+        /// effect -- without running the explosion itself, which hits everyone nearby.
+        /// The flag is declared before the active flag, so it reaches other clients first.
+        /// </summary>
+        internal static void SnapOffShield(PlayerInfo player, string why)
+        {
+            _lingerUntil = double.MinValue;
+            if (player == null || !player.IsElectromagnetShieldActive) return;
+            try
+            {
+                player.NetworkdidLastElectromagnetShieldExplode = true;
+                _activationTimestamp(player) = double.MinValue;
+                player.NetworkisElectromagnetShieldActive = false;
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning($"Snap-off failed ({why}); using the normal cancel: {e.Message}");
+                try { player.LocalPlayerCancelElectromagnetShield(false); } catch { }
+            }
+            if (VerboseLogging.Value) Log.LogInfo($"Shield snapped off ({why}).");
         }
 
         // ---- Debug helpers -------------------------------------------------
@@ -1258,11 +1393,21 @@ namespace SbgShields
         }
 #endif
 
-        /// <summary>The handshake gate closed mid-match: drop the shield we should not have.</summary>
-        internal static void ForceReleaseForHandshake()
+        /// <summary>
+        /// The handshake gate closed: the mod stands down and vanilla rules apply from
+        /// now. Drop OUR bubble (never the magnet item's, which is vanilla) and stop a
+        /// death launch that is already under way.
+        /// </summary>
+        internal static void OnStandDown(string why)
         {
-            // No linger here: the gate closed, the shield should be gone now, not in 0.2s.
-            try { if (_weActivated) ReleaseShield(); CancelLingeringShield("handshake"); } catch { }
+            try
+            {
+                if (_weActivated || ShieldLingering) ForceDrop("standing down: " + why);
+            }
+            catch (Exception e) { Log.LogWarning("Stand-down bubble drop failed: " + e.Message); }
+            try { KillZone.StandDown(); }
+            catch (Exception e) { Log.LogWarning("Stand-down star KO cleanup failed: " + e.Message); }
+            ShieldState.KillZoneDeathPending = false;
         }
 
         /// <summary>Called by ShieldState when the shield is cancelled by a break rather than a release.</summary>
@@ -1270,7 +1415,6 @@ namespace SbgShields
         {
             _weActivated = false;
             _lingerUntil = double.MinValue;   // it broke; there is no body left to linger
-            LastOurShieldReleaseTime = Time.timeAsDouble;
         }
     }
 }

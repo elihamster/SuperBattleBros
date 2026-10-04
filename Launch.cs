@@ -19,14 +19,17 @@ namespace SbgShields
     ///    you flew toward it. Camera-relative has one rule and no exceptions. Smash
     ///    reads DI on the hit frame; reading the first input inside a short window is
     ///    the same idea with a little forgiveness for reaction time. Local: the launch
-    ///    is the victim's own velocity, which replicates like any movement.
+    ///    is the victim's own velocity, which replicates like any movement. DI waits one
+    ///    physics step after the hit: item and ball knockback is an AddForce that the
+    ///    engine only integrates after the next step, so the first step's velocity is
+    ///    not the launch yet. A bubble-break bounce is never steered: it goes straight up.
     ///
     /// Two features used to live here and are gone. The APEX WAKE-UP ended the
     /// knockout at the top of the arc; it was replaced by hitstun getting SHORTER as
     /// percent climbs (Percent.HitstunMultiplierAtMax), through the game's own timer.
     /// Since 0.7.8 the timer ending mid-air no longer wakes you either: with
-    /// Launch.StayDownUntilLanding on, AirHold in Patches.cs raises the shield and
-    /// keeps you tumbling until you land. DISTANCE SENT ("sent 34 m", session best,
+    /// Launch.StayDownUntilLanding on, AirHold in Patches.cs raises the comeback shield
+    /// and pins the game's timer so you keep tumbling until the game sees you land. DISTANCE SENT ("sent 34 m", session best,
     /// high-score sound) is out until the record itself is designed -- what it is
     /// measured against, and over what span.
     /// </summary>
@@ -38,6 +41,13 @@ namespace SbgShields
 
         private static double _diUntil = double.MinValue;
         private static bool   _diDone = true;
+        private static int    _steps;      // physics steps this launch has seen
+
+        /// <summary>
+        /// False on the launch's first physics step, when an AddForce knockback has not
+        /// been integrated yet. Drag and DI wait for it.
+        /// </summary>
+        internal static bool PastFirstStep => _active && _steps > 1;
 
         /// <summary>True from the hit until the launch ends (landing, recovery, kill, respawn).</summary>
         internal static bool Active => _active;
@@ -45,16 +55,17 @@ namespace SbgShields
         /// <summary>This launch is big enough for the cloud-hit extras (hang time).</summary>
         internal static bool IsCloudHit => _active && _cloudHit;
 
-        internal static void Begin()
+        internal static void Begin(bool isBreakBounce = false)
         {
             _active = true;
-            _cloudHit = ShieldState.Percent >= Plugin.CloudHitMinPercent.Value;
+            _cloudHit = !isBreakBounce && ShieldState.EffectivePercent >= Plugin.CloudHitMinPercent.Value;
             _startedAt = Time.timeAsDouble;
-            _diDone  = !Plugin.DirectionalInfluence.Value;
+            _steps = 0;
+            _diDone  = isBreakBounce || !Plugin.DirectionalInfluence.Value;
             _diUntil = _startedAt + Mathf.Max(0f, Plugin.DIWindow.Value);
         }
 
-        internal static void Cancel() { _active = false; _diDone = true; }
+        internal static void Cancel() { _active = false; _diDone = true; _steps = 0; }
 
         /// <summary>Called from the FixedUpdate prefix for the local player.</summary>
         internal static void Tick(PlayerMovement mv, Rigidbody rb)
@@ -65,7 +76,10 @@ namespace SbgShields
             // Let go if something else took over (respawn, star KO) or it has gone on too long.
             if (mv.IsRespawningOrDrowning || KillZone.IsLingering || now - _startedAt > 12.0) { End("cancelled"); return; }
 
-            if (!_diDone)
+            bool firstStep = _steps == 0;
+            if (_steps < int.MaxValue) _steps++;
+
+            if (!_diDone && !firstStep)
             {
                 if (now >= _diUntil) _diDone = true;
                 else TryDirectionalInfluence(mv, rb);

@@ -16,7 +16,6 @@ namespace SbgShields
         private static Texture2D _glowTex;
         private static GUIStyle  _percentStyle;
         private static GUIStyle  _timerStyle;
-        private static GUIStyle  _labelStyle;
 
         private static double _shakeStart = double.MinValue;
         private static float  _shakeSeed;
@@ -39,16 +38,23 @@ namespace SbgShields
             if (_dotTex    != null) { UnityEngine.Object.Destroy(_dotTex);    _dotTex    = null; }
             if (_glowTex   != null) { UnityEngine.Object.Destroy(_glowTex);   _glowTex   = null; }
             _percentStyle = null;
-            _fontSearched = false;
+            DestroyFont();
             _cachedPct = int.MinValue;
         }
 
         /// <summary>Font name edited in game: look it up again on the next draw.</summary>
         internal static void InvalidateFont()
         {
-            _fontSearched = false;
+            DestroyFont();
             _percentStyle = null;
             _cachedPct = int.MinValue;
+        }
+
+        /// <summary>The font is one we created from an OS font, so it is ours to destroy.</summary>
+        private static void DestroyFont()
+        {
+            if (_font != null) { UnityEngine.Object.Destroy(_font); _font = null; }
+            _fontSearched = false;
         }
 
         // Percent text and its measurements only change when the percent does.
@@ -95,7 +101,6 @@ namespace SbgShields
                 _percentStyle.normal.textColor = Color.white;
 
                 _timerStyle = new GUIStyle(_percentStyle) { alignment = TextAnchor.MiddleCenter };
-                _labelStyle = new GUIStyle(_percentStyle) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Normal };
             }
         }
 
@@ -530,7 +535,7 @@ namespace SbgShields
             // flares white for a moment after a parry, and all but goes out on cooldown.
             float glow = Mathf.Max(0f, Plugin.HudGlow.Value);
             double nowG = Time.timeAsDouble;
-            float parryT = (float)((nowG - ShieldState.LastParryAt) / 0.45);
+            float parryT = (float)((nowG - ShieldState.LastParryAt) / Plugin.ParryFlashSeconds);
             bool parrying = parryT >= 0f && parryT < 1f;
             Color glowColour = skin;
             float glowStrength, glowSpread = 1.9f;

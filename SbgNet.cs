@@ -39,17 +39,14 @@ namespace SbgShields
             public float A;
         }
 
-        private static bool _serverReg, _clientReg, _serializersReg, _warned;
+        private static bool _serverReg, _clientReg, _serializersReg;
+        private static readonly HashSet<string> _warned = new HashSet<string>();
         private static double _lastPercentSend = double.MinValue;
         private static float  _lastPercentSent = float.MinValue;
         private static double _lastPipsSend = double.MinValue;
         private static float  _lastPipsSent = float.MinValue;
         private static readonly Dictionary<uint, float> _remotePercent = new Dictionary<uint, float>();
         private static readonly Dictionary<uint, float> _remotePips = new Dictionary<uint, float>();
-        private static int _received, _sent;
-
-        internal static int Received => _received;
-        internal static int Sent => _sent;
 
         private static void EnsureSerializers()
         {
@@ -119,12 +116,20 @@ namespace SbgShields
                 var local = GameManager.LocalPlayerInfo;
                 if (local == null) return false;
                 NetworkClient.Send(new Msg { Kind = (byte)kind, NetId = local.netId, A = a });
-                _sent++;
                 return true;
             }
             catch (Exception e) { WarnOnce("send", e); return false; }
         }
 
+        /// <summary>
+        /// The host relays a player's message to the players who can read it, and to
+        /// nobody else. Mirror adds a connection the moment a joiner's transport connects,
+        /// long before anyone knows whether they have the mod, and a vanilla client that
+        /// receives an unknown message is disconnected. So: nothing is relayed while the
+        /// host's own gate is closed, the host's local client always gets it, and a remote
+        /// connection gets it only if its player has announced exactly this version.
+        /// (SendToAll, used until 0.7.33, reached joiners that were still loading.)
+        /// </summary>
         private static void OnServer(NetworkConnectionToClient conn, Msg m)
         {
             try
@@ -134,17 +139,31 @@ namespace SbgShields
                 if (float.IsNaN(m.A) || float.IsInfinity(m.A)) return;
                 var p = FindPlayer(m.NetId);
                 if (p == null || p.connectionToClient != conn) return;   // only about yourself
+                if (!ModHandshake.GameplayEnabled) return;
                 m.A = Mathf.Clamp(m.A, 0f, 1000f);
-                NetworkServer.SendToAll(m);
+                Relay(m);
             }
             catch (Exception e) { WarnOnce("server", e); }
+        }
+
+        private static void Relay(Msg m)
+        {
+            var local = NetworkServer.localConnection;
+            if (local != null) local.Send(m);
+            var remote = GameManager.RemotePlayers;
+            if (remote == null) return;
+            foreach (var p in remote)
+            {
+                if (p == null || !ModHandshake.IsConfirmed(p)) continue;
+                var c = p.connectionToClient;
+                if (c != null && c != local) c.Send(m);
+            }
         }
 
         private static void OnClient(Msg m)
         {
             try
             {
-                _received++;
                 var p = FindPlayer(m.NetId);
                 if (p == null) return;
                 if (Local.Is(p)) return;   // our own echo; we already know
@@ -205,11 +224,11 @@ namespace SbgShields
             return null;
         }
 
+        /// <summary>One full line per kind of failure, so a second, different failure is not hidden behind the first.</summary>
         private static void WarnOnce(string where, Exception e)
         {
-            if (_warned) return;
-            _warned = true;
-            Plugin.Log.LogWarning($"SbgNet ({where}) failed; shared visuals are off for this session: {e.GetType().Name}: {e.Message}");
+            if (!_warned.Add(where + ":" + e.GetType().Name)) return;
+            Plugin.Log.LogWarning($"SbgNet ({where}) failed; further {e.GetType().Name} errors here are not logged: {e}");
         }
 
         internal static void Shutdown()

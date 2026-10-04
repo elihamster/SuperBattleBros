@@ -98,7 +98,17 @@ namespace SbgShields
             ShieldState.PendingHitDistance    = distance;
             ShieldState.PendingHitLocalOrigin = localOrigin;
 
-            bool proceed = ShieldState.ResolveKnockout(__instance.PlayerInfo, knockoutType, incomingVelocityChange);
+            bool proceed;
+            try { proceed = ShieldState.ResolveKnockout(__instance.PlayerInfo, responsiblePlayer, knockoutType, incomingVelocityChange); }
+            catch (Exception e)
+            {
+                // This prefix runs inside the game's hit handler (an RPC or a command). An
+                // exception escaping it makes Mirror drop the connection, so a bug here
+                // must degrade to "vanilla hit", never to a disconnect.
+                Plugin.Log.LogError("Hit resolution failed; this hit is vanilla: " + e);
+                ShieldState.ClearPending();
+                return true;
+            }
             if (!proceed)
             {
                 __result = false;
@@ -112,7 +122,8 @@ namespace SbgShields
         private static void Postfix(bool __result, bool __state)
         {
             if (!__state) return;
-            ShieldState.OnKnockoutResolved(__result);
+            try { ShieldState.OnKnockoutResolved(__result); }
+            catch (Exception e) { Plugin.Log.LogError("Knockout bookkeeping failed: " + e); }
         }
     }
 
@@ -138,7 +149,9 @@ namespace SbgShields
 
     /// <summary>
     /// timeUntilKnockoutRecovery is a flat constant set inside SetKnockOutState(InAir).
-    /// Scale it here. This is the whole hitstun system.
+    /// The percent layer scales it here on a fresh knockout. The landing stun, the
+    /// stun floors and the air hold adjust it later through ClampRecoveryTimer and
+    /// SetRecoveryTimer.
     /// </summary>
     [HarmonyPatch(typeof(PlayerMovement), "SetKnockOutState")]
     internal static class HitstunPatch
@@ -170,12 +183,38 @@ namespace SbgShields
             return true;
         }
 
+        /// <summary>Set the game's recovery timer outright. False if the field is unavailable.</summary>
+        internal static bool SetRecoveryTimer(PlayerMovement mv, float seconds)
+        {
+            if (_timeUntilRecovery == null || mv == null) return false;
+            _timeUntilRecovery(mv) = seconds;
+            return true;
+        }
+
+        /// <summary>The game's recovery timer, or +infinity if the field is unavailable.</summary>
+        internal static float RecoveryTimer(PlayerMovement mv) =>
+            _timeUntilRecovery == null || mv == null ? float.PositiveInfinity : _timeUntilRecovery(mv);
+
+        /// <summary>
+        /// True while the game is inside SetKnockOutState. StartKnockoutImmunity is called
+        /// from there (recoveries) and also from the dive-spam and thaw paths; only the
+        /// first is ours to shorten (TechImmunityPatch).
+        /// </summary>
+        internal static int SettingKnockoutState;
+
         private static void Prefix(PlayerMovement __instance, out bool __state)
         {
             // Was the player already knocked out before this call? The game only
             // resets the recovery timer on the None -> knocked-out transition, and
             // this setter is called every physics frame while airborne.
             __state = __instance.IsKnockedOutOrRecovering;
+            SettingKnockoutState++;
+        }
+
+        private static Exception Finalizer(Exception __exception)
+        {
+            if (SettingKnockoutState > 0) SettingKnockoutState--;
+            return __exception;
         }
 
         private static void Postfix(PlayerMovement __instance, KnockoutState state, bool __state)
@@ -202,10 +241,13 @@ namespace SbgShields
 
             ShieldState.CurrentKnockoutIsBreak = ShieldState.PendingIsBreak;
             ShieldState.CurrentKnockoutSelfInflicted = ShieldState.PendingSelfInflicted;
+            // Only an explicit multiplier from ResolveKnockout scales the stun. Every
+            // path that leaves it unset (standing down, outside a hole, percent off, the
+            // magnet item, a knockout we did not see) is meant to be the game's own stun;
+            // it used to fall back to the percent curve, so a percent left over from the
+            // last match shortened knockouts in the range.
             if (ShieldState.PendingHitstunMultiplier >= 0f)
                 t *= ShieldState.PendingHitstunMultiplier;
-            else
-                t *= ShieldState.HitstunMultiplier; // knockout from a path we did not see (should be rare)
             if (ShieldState.PendingIsBreak) BreakTrace.Log($"break stun applied: timer={t:0.00}s (x{ShieldState.PendingHitstunMultiplier:0.00})");
 
             ShieldState.PendingIsBreak           = false;
@@ -291,17 +333,18 @@ namespace SbgShields
     }
 
     /// <summary>
-    /// The game recovers a knocked-out player through RecoverFromKnockout, reached
-    /// from its recovery timer, its knockout time-out, and a few other places. Two
-    /// holds live in this one prefix, so exactly one thing decides the method: the
-    /// death launch (never wakes) and the air hold (see AirHold). Freezing and the
-    /// direct SetKnockOutState(None) paths (teleport, respawn, elimination,
-    /// invisibility) are untouched.
+    /// The death launch never wakes up. KillZone fires at the apex and needs the body
+    /// still knocked out to get there; if the stun timer ran out first (it does -- the
+    /// kill boost makes the rise far longer than any stun) the game recovered you
+    /// mid-air, KillZone saw a player who was no longer knocked out, and disarmed. That
+    /// was "you don't die at 250%". The game's 10 s time-out is held too, because the
+    /// rise can be long. The air hold does not live here any more: it pins the timer
+    /// instead (AirHold), so the game's own ground check keeps running.
     /// </summary>
     [HarmonyPatch(typeof(PlayerMovement), "RecoverFromKnockout")]
     internal static class RecoveryHoldPatch
     {
-        private static double _lastLog = double.MinValue;
+        private static double _loggedFor = double.MinValue;
 
         /// <summary>
         /// Low priority, like every prefix of ours that can return false: running last
@@ -312,26 +355,18 @@ namespace SbgShields
         private static bool Prefix(PlayerMovement __instance)
         {
             if (!Local.Is(__instance.PlayerInfo)) return true;
-            if (!__instance.IsKnockedOut) { BreakTrace.Log("RecoverFromKnockout allowed (not knocked out)"); AirHold.Released(__instance, "not knocked out"); return true; }
-            try { if (__instance.PlayerInfo.AsHittable.FrozenState == FrozenState.Frozen) { AirHold.Released(__instance, "frozen"); return true; } } catch { }
-            if (__instance.IsRespawningOrDrowning) { AirHold.Released(__instance, "respawning"); return true; }
+            if (!__instance.IsKnockedOut) return true;
+            if (!KillZone.IsArmed || !ModHandshake.GameplayEnabled) return true;
+            try { if (__instance.PlayerInfo.AsHittable.FrozenState == FrozenState.Frozen) return true; } catch { }
+            if (__instance.IsRespawningOrDrowning) return true;
 
-            double now = Time.timeAsDouble;
-
-            // A death launch never wakes up. KillZone fires at the apex and needs the body
-            // still knocked out to get there; if the stun timer ran out first (it does --
-            // the kill boost makes the rise far longer than any stun) the game recovered you
-            // mid-air, KillZone saw a player who was no longer knocked out, and disarmed.
-            // That was "you don't die at 250%". Checked before the air hold so a dead
-            // player gets no bubble either.
-            if (KillZone.IsArmed)
+            // One line per death launch, not one every half second.
+            if (_loggedFor != __instance.IsKnockedOutTimestamp)
             {
-                if (now - _lastLog > 0.5) { _lastLog = now; Plugin.Log.LogInfo("Death launch: holding the knockout until the apex."); }
-                return false;
+                _loggedFor = __instance.IsKnockedOutTimestamp;
+                Plugin.Log.LogInfo("Death launch: holding the knockout until the apex.");
             }
-
-            if (AirHold.ShouldHold(__instance)) return false;
-            return true;
+            return false;
         }
     }
 
@@ -344,51 +379,69 @@ namespace SbgShields
     /// comeback bubble, and UpdatePhysicsParameters stops using KnockOutGravityFactor:
     /// the body stops falling like a body and floats down at walking-state gravity.
     ///
-    /// This keeps the knockout going until the game's own ground check passes, and
-    /// raises the bubble itself at the moment vanilla would have. From the player's
-    /// chair: the bubble appears mid-air and you cannot be juggled, but you keep
-    /// tumbling and fall at the same speed until you hit the ground, then get up as
-    /// usual. On landing SetKnockOutState(Recovering) calls StartKnockoutImmunity,
-    /// which stops the coroutine in knockoutImmunityRoutine (ours) and runs its own
-    /// timer, so the post-recovery immunity is exactly vanilla's.
+    /// The hold PINS the game's recovery timer just above zero while you are in the air
+    /// (from the FixedUpdate prefix, before UpdateKnockOutState runs). The game then
+    /// keeps running its own ground check every step; it is the only place OnGround is
+    /// ever set. The first hold version skipped RecoverFromKnockout instead, which also
+    /// skipped that check: the landing was never seen, so no tech, no landing stun and
+    /// no get-up animation, just a snap upright when the 3 s cap ran out.
     ///
-    /// The game's KnockoutTimeOutDuration is kept as the escape hatch: a body that
-    /// never finds ground (wedged, bouncing) recovers when vanilla would have anyway.
+    /// From the player's chair: the comeback bubble appears mid-air when the stun runs
+    /// out and you cannot be juggled, you keep tumbling and fall at knockout gravity,
+    /// and on landing the landing stun (or a tech) and the normal get-up play.
+    /// StayDownMaxTime caps the hold for a body that never finds ground; after it the
+    /// timer is let go and vanilla recovers you where you are.
     /// </summary>
     internal static class AirHold
     {
         private static AccessTools.FieldRef<PlayerMovement, Coroutine> _routine;
         private static bool _bound, _bindFailed;
 
-        /// <summary>IsKnockedOutTimestamp of the knockout we already raised the bubble for. A new knockout has a new stamp.</summary>
-        private static double _grantedFor = double.MinValue;
+        /// <summary>IsKnockedOutTimestamp of the knockout the hold belongs to. A new knockout has a new stamp.</summary>
+        private static double _holdFor = double.MinValue;
         private static bool   _holding;
         private static double _holdingSince;
 
-        internal static bool ShouldHold(PlayerMovement mv)
-        {
-            if (!Plugin.StayDownUntilLanding.Value) return false;
-            if (!ModHandshake.GameplayEnabled) return false;            // standing down: vanilla rules
-            if (mv.KnockoutState != KnockoutState.InAir) { Released(mv, "landed"); return false; }
+        internal static bool IsHolding => _holding;
 
-            float timeout = 30f;
+        /// <summary>
+        /// Every physics step, from the FixedUpdate prefix, before UpdateKnockOutState.
+        /// Starts, keeps or ends the hold for the local player.
+        /// </summary>
+        internal static void Tick(PlayerMovement mv)
+        {
+            // A hold that belongs to an earlier knockout (respawn, teleport, elimination
+            // and fog all end a knockout without RecoverFromKnockout) ends here.
+            if (_holding && (!mv.IsKnockedOut || _holdFor != mv.IsKnockedOutTimestamp)) Released(mv, mv.IsKnockedOut ? "new knockout" : "ended");
+
+            if (mv.KnockoutState != KnockoutState.InAir) return;
+            if (!Plugin.StayDownUntilLanding.Value || !ModHandshake.GameplayEnabled || KillZone.IsArmed) { Released(mv, "not holding"); return; }
+            try { if (mv.PlayerInfo.AsHittable.FrozenState == FrozenState.Frozen) { Released(mv, "frozen"); return; } } catch { }
+            if (mv.IsRespawningOrDrowning) { Released(mv, "respawning"); return; }
+
+            double now = Time.timeAsDouble;
+            float timeout = 10f;
             try { timeout = GameManager.PlayerMovementSettings.KnockoutTimeOutDuration; } catch { }
-            double since = Time.timeAsDouble - mv.IsKnockedOutTimestamp;
-            if (since >= timeout) { Released(mv, "knockout timed out"); return false; }
+            if (now - mv.IsKnockedOutTimestamp >= timeout) { Released(mv, "knockout timed out"); return; }
+
             // Our own, shorter cap: a body that has not found ground this long after its
             // stun ended is stuck on something, and the game's 10 s is too long to wait.
-            if (_holding && Time.timeAsDouble - _holdingSince >= Mathf.Max(0.5f, Plugin.StayDownMaxTime.Value))
-            { Released(mv, "held long enough"); return false; }
+            if (_holding && now - _holdingSince >= Mathf.Max(0.5f, Plugin.StayDownMaxTime.Value)) { Released(mv, "held long enough"); return; }
+            // Past the cap for THIS knockout: do not start again.
+            if (!_holding && _holdFor == mv.IsKnockedOutTimestamp) return;
 
-            if (_grantedFor != mv.IsKnockedOutTimestamp)
+            float pin = 2f * Time.fixedDeltaTime;
+            if (HitstunPatch.RecoveryTimer(mv) > pin) return;   // the stun is still running on its own
+            if (!HitstunPatch.SetRecoveryTimer(mv, pin)) return;
+
+            if (!_holding)
             {
-                _grantedFor = mv.IsKnockedOutTimestamp;
                 _holding = true;
-                _holdingSince = Time.timeAsDouble;
+                _holdFor = mv.IsKnockedOutTimestamp;
+                _holdingSince = now;
                 Grant(mv);
-                Plugin.Log.LogInfo($"Stun ended mid-air at {ShieldState.Percent:0}% after {since:0.00}s: bubble up, staying down until landing.");
+                Plugin.Log.LogInfo($"Stun ended mid-air at {ShieldState.EffectivePercent:0}% after {now - mv.IsKnockedOutTimestamp:0.00}s: bubble up, staying down until landing.");
             }
-            return true;
         }
 
         /// <summary>Logs the end of a hold once. Cheap: the flag is false almost always.</summary>
@@ -396,7 +449,7 @@ namespace SbgShields
         {
             if (!_holding) return;
             _holding = false;
-            Plugin.Log.LogInfo($"Air hold released ({how}) after {Time.timeAsDouble - _holdingSince:0.00}s; vanilla recovery runs now.");
+            Plugin.Log.LogInfo($"Air hold released ({how}) after {Time.timeAsDouble - _holdingSince:0.00}s.");
         }
 
         private static bool Bind()
@@ -415,6 +468,8 @@ namespace SbgShields
         private static void Grant(PlayerMovement mv)
         {
             if (!Bind()) return;
+            // The game never gives a Jumbo Burger giant knockout immunity (CanHaveKnockoutImmunity).
+            try { if (mv.PlayerInfo.IsInJumboBurgerGiantForm) return; } catch { }
             try
             {
                 // Same slot the game uses, so its own StartKnockoutImmunity (on landing,
@@ -468,6 +523,14 @@ namespace SbgShields
         private static bool Prefix(PlayerMovement __instance, bool fromPlayerAggression)
         {
             if (!fromPlayerAggression || !Local.Is(__instance.PlayerInfo)) return true;
+            // Standing down means vanilla: the lobby's own recovery protection.
+            if (!ModHandshake.GameplayEnabled) { ShieldState.ConsumeTechRecovery(); return true; }
+            // A giant gets no immunity at all (the game's CanHaveKnockoutImmunity); let it say so.
+            try { if (__instance.PlayerInfo.IsInJumboBurgerGiantForm) { ShieldState.ConsumeTechRecovery(); return true; } } catch { }
+            // Only a RECOVERY is ours to shorten. The game also calls this for the third
+            // dive hit in a row and on thawing from a freeze bomb; those keep vanilla's
+            // protection. Recoveries come from inside SetKnockOutState.
+            if (HitstunPatch.SettingKnockoutState <= 0) return true;
 
             float duration;
             if (ShieldState.ConsumeTechRecovery())
@@ -534,8 +597,10 @@ namespace SbgShields
     }
 
     /// <summary>
-    /// The game applies the full knockback before we get a say. Apply the
-    /// correction on the next physics step, before integration.
+    /// The game applies the full knockback right after TryKnockOut, before we get a
+    /// say. Apply the correction on the next physics step, before integration. Also
+    /// the home of every per-step job for the local player: tech, air hold, launch
+    /// (DI, drag, hang).
     /// </summary>
     [HarmonyPatch(typeof(PlayerMovement), "FixedUpdate")]
     internal static class VelocityCorrectionPatch
@@ -556,20 +621,34 @@ namespace SbgShields
             }
         }
 
+        private static bool _warned;
+
         private static void Prefix(PlayerMovement __instance)
         {
             if (!Local.Is(__instance.PlayerInfo)) return;
+            // A throw here would skip the player's whole FixedUpdate on every step.
+            try { Run(__instance); }
+            catch (Exception e)
+            {
+                if (_warned) return;
+                _warned = true;
+                Plugin.Log.LogError("Physics step failed (logged once; the game's own step still runs): " + e);
+            }
+        }
+
+        private static void Run(PlayerMovement __instance)
+        {
             var rb = _rigidbody(__instance);
             if (rb == null || rb.isKinematic) return;
 
             // Before the game's own UpdateKnockOutState on this step can start the get-up.
             ShieldState.TryExecuteTech(__instance, rb);
+            AirHold.Tick(__instance);
 
             if (ShieldState.HasPendingVelocityCorrection)
             {
-                ShieldState.HasPendingVelocityCorrection = false;
-                rb.linearVelocity += ShieldState.PendingVelocityCorrection;
-                ShieldState.PendingVelocityCorrection = Vector3.zero;
+                ShieldState.ConsumeCorrection(out Vector3 correction);
+                rb.linearVelocity += correction;
             }
 
             Launch.Tick(__instance, rb);
@@ -579,8 +658,10 @@ namespace SbgShields
             // Drag only bites on speed ABOVE a threshold. The old version scaled all
             // horizontal speed down every step, which over the drag window removed
             // ~85% of it: launches went up, stopped dead sideways, and floated down.
-            // Now a launch keeps its travel and only the extreme burst is tamed.
-            if (Time.timeAsDouble < ShieldState.LaunchDragUntil && __instance.IsKnockedOutOrRecovering && !__instance.IsGrounded)
+            // Now a launch keeps its travel and only the extreme burst is tamed. Not on
+            // the launch's first step: item and ball knockback is an AddForce the engine
+            // only integrates after this step, so the velocity here is not the launch yet.
+            if (Time.timeAsDouble < ShieldState.LaunchDragUntil && Launch.PastFirstStep && __instance.IsKnockedOutOrRecovering && !__instance.IsGrounded)
             {
                 var v = rb.linearVelocity;
                 float floor = Plugin.LaunchDragAboveSpeed.Value;
@@ -607,11 +688,9 @@ namespace SbgShields
             // Hang time. Without this a launch is over about as fast as a vanilla hit,
             // because the same gravity is pulling on a body that went higher. Gravity is
             // scaled down near the top of the arc -- where vertical speed is smallest --
-            // so the rise and fall keep their shape and only the apex stretches. Scales
-            // with percent, so it is the big hits that float.
-            // Hang time only on cloud hits, and off by default now: on ordinary hits it read
-            // as the body slowing down mid-flight and speeding up again, which is exactly
-            // what it is. Keep it for the big launches if it earns its place there.
+            // so the rise and fall keep their shape and only the apex stretches. Only on
+            // cloud hits (CloudHitMinPercent and up), ramping to full at HangFullPercent,
+            // so it is the big hits that float.
             if (Plugin.LaunchHangTime.Value > 0f && Launch.IsCloudHit && ShieldState.LaunchHangUntil > Time.timeAsDouble &&
                 __instance.IsKnockedOutOrRecovering && !__instance.IsGrounded)
             {
@@ -854,6 +933,42 @@ namespace SbgShields
             if ((protectiveState & ProtectiveState.ElectromagnetShield) == 0) return;
             protectiveState &= ~ProtectiveState.ElectromagnetShield;
             Plugin.Log.LogInfo($"{itemType} hit a bubbled player: bubble ignored, elimination rules apply.");
+        }
+    }
+
+    /// <summary>
+    /// Turning giant cancels the shield with the game's EXPLODE path, which hits everyone
+    /// within 7 m. With the Shift bubble up while eating a Jumbo Burger, that blew up your
+    /// friends. Drop our bubble quietly first, so the game finds nothing to explode. The
+    /// magnet item's own shield is vanilla and is left to explode as the game intends.
+    /// Raising the bubble while giant is refused (Plugin.IsGiant).
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerInfo), nameof(PlayerInfo.LocalPlayerActivateJumboBurgerGiantForm))]
+    internal static class GiantFormDropsBubblePatch
+    {
+        private static void Prefix(PlayerInfo __instance)
+        {
+            if (!Local.Is(__instance) || !__instance.IsElectromagnetShieldActive) return;
+            if (!Plugin.WeActivated && !Plugin.ShieldLingering) return;
+            Plugin.ForceDrop("giant form");
+        }
+    }
+
+    /// <summary>
+    /// The magnet item raised while our bubble is up or lingering. The game would only
+    /// refresh the existing shield, which keeps our placeholder item id and dies when the
+    /// linger ends: the item was spent and its 7 s shield vanished. Hand the shield over
+    /// cleanly: drop ours (no parry, no linger), then let the item raise a fresh one with
+    /// its own id and its own timer.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerInfo), nameof(PlayerInfo.LocalPlayerActivateElectromagnetShield))]
+    internal static class ItemShieldTakesOverPatch
+    {
+        private static void Prefix(PlayerInfo __instance)
+        {
+            if (Plugin.ActivatingOurs || !Local.Is(__instance) || !__instance.IsElectromagnetShieldActive) return;
+            if (!Plugin.WeActivated && !Plugin.ShieldLingering) return;
+            Plugin.ForceDrop("magnet item used");
         }
     }
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.34 (test build)
+
+Cleanup release from the 0.7.33 code review. No new features; a lot of things now work the way they were meant to.
+
+- **A parry and an absorb no longer move you.** The shove cancel they queue was being wiped right after the hit, so a perfect parry or an absorbed rocket still threw you at full force. This was the "knockback right after a parry" report.
+- **Every player needs the mod.** A modded host now removes anyone who joins without it, or on another version, with a chat line saying why. They can come straight back once they have it. The host also never forwards the mod's messages to a player who has not confirmed the same version (that used to disconnect a vanilla joiner while they loaded).
+- **Landing after a long stun works.** When your stun ran out in the air, the game never saw you land: no tech, no landing stun, no get-up animation, then a snap upright after 3 s. Now you tumble down, land, and tech or get up normally.
+- **A break snaps the bubble off** instead of playing the soft release fade under the shatter.
+- **The game's own refusals come first.** A teammate's hit, a hit during the comeback shield, domination protection or a frozen body no longer spends pips or uses up your parry.
+- **Forced drops are not releases.** The bubble going down because of the comeback shield, a cart, the countdown, the victory dance, spring boots or giant form no longer arms a parry or lingers. It still starts the use cooldown.
+- **Jumbo Burger with the bubble up no longer explodes it onto everyone nearby.** The bubble drops quietly first, and it cannot be raised while giant.
+- **The magnet item used during the linger keeps its full shield** instead of vanishing when the linger ends.
+- **Pressing Shift during the linger re-raises right away** (cooldowns and state rules still apply).
+- **Two hits inside one physics step both count.** The second used to wipe the first's correction.
+- **DI waits one physics step** so it turns the actual launch, and a break bounce is never steered sideways.
+- **A refused hit stops its launch** (no DI, hang or drag on a shove that stunned nobody).
+- **A parry never fires on your own tumbling body,** and the parry cover follows the same full-break rule as the parry.
+- **Absorb sparks play once,** on the side the hit came from.
+- **Particle colours no longer drift** brighter or darker while a bubble is held, blinking or flashing; each player's parry flash is tracked separately; a pooled bubble effect is always tinted for its current owner.
+- **Leftover percent stays out of the range:** stun length, smoke trails, embers and the tech gate there use no percent. In the range a fast tumble smokes and can be teched for practice.
+- **Comeback shield timing:** the mod's 1 s recovery shield applies only to recoveries in a modded lobby; dive-spam and thaw protection and Jumbo Burger giants are vanilla again.
+- **Standing down mid-death** ends the death launch instead of hiding and respawning you under vanilla rules.
+- **Updates keep your settings.** Only defaults changed since the version you last ran are reset; the old list reset about 25 settings on every update.
+- **A quoted sound path** (Explorer's "Copy as path") no longer throws on every parry and drops players.
+- **The handshake re-arms on every scene load,** and the match-start reset now actually runs.
+- Robustness: each module's failure is logged once in full and the rest keeps running; a failed patch is named in the load line; a hit-resolution error degrades to a vanilla hit instead of a disconnect.
+- Logs: one line per landed hit (only when it really lands), one per refused hit, one "Shift ignored" per press, one "Death launch" per death.
+
 ## 0.7.33 (test build)
 
 - A parry covers the hits right behind the one it read: another projectile within 0.2 s of a parried projectile is parried too (a rocket volley), likewise club after club. The arm is still spent by the first hit. `Parry.ParryCoverWindow`.

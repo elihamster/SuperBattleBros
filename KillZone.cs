@@ -53,7 +53,8 @@ namespace SbgShields
             float boost = Plugin.KillZoneUpwardBoost.Value;
             if (boost > 0f)
             {
-                // Rides along with the shaped-launch correction the FixedUpdate patch applies.
+                // Rides along with the shaped-launch correction the FixedUpdate patch applies
+                // (an accumulator, so it adds to whatever this physics step already holds).
                 ShieldState.PendingVelocityCorrection += Vector3.up * boost;
                 ShieldState.HasPendingVelocityCorrection = true;
                 ShieldState.LaunchDragUntil = double.MinValue; // no drag on the death launch
@@ -64,10 +65,31 @@ namespace SbgShields
 
         internal static void Disarm() { _armed = false; }
 
+        /// <summary>
+        /// The mod stood down mid-death: vanilla rules from here. A launch still rising
+        /// just stops being a death launch. A player already hidden at the apex is
+        /// respawned now rather than shown again hanging in the sky.
+        /// </summary>
+        internal static void StandDown()
+        {
+            if (_armed)
+            {
+                _armed = false;
+                Plugin.Log.LogInfo("Standing down: the death launch is cancelled; vanilla rules from here.");
+            }
+            if (_lingering)
+            {
+                _lingering = false;
+                var mv = GameManager.LocalPlayerInfo != null ? GameManager.LocalPlayerInfo.Movement : null;
+                if (mv != null) BeginRespawn(mv);
+            }
+        }
+
         internal static void Tick()
         {
             if (_lingering) { TickLinger(); return; }
             if (!_armed) return;
+            if (!ModHandshake.GameplayEnabled) { StandDown(); return; }
             var p = GameManager.LocalPlayerInfo;
             var mv = p != null ? p.Movement : null;
             if (mv == null) { _armed = false; return; }

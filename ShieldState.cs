@@ -8,8 +8,9 @@ namespace SbgShields
     /// <summary>
     /// All shield economy state for the LOCAL player. Knockouts in this game are
     /// victim-authoritative (TryKnockOut / CanBeKnockedOutBy run on the victim's
-    /// own client), so pips, percent and hitstun can all live here with no new
-    /// network messages. Every player runs this for themselves.
+    /// own client), so pips, percent and hitstun all live here and are decided on
+    /// the victim's machine. Other players learn the visible parts (percent, pips,
+    /// parries, star KOs) through SbgNet. Every player runs this for themselves.
     /// </summary>
     internal static class ShieldState
     {
@@ -44,7 +45,7 @@ namespace SbgShields
 
         internal static double UseCooldownUntil   = double.MinValue;
 
-        /// <summary>When the shield was last deliberately released. The perfect-parry window is measured from here.</summary>
+        /// <summary>When the bubble was last deliberately released (key up). The parry log reports the parry's delay from here.</summary>
         internal static double LoweredAt = double.MinValue;
 
         /// <summary>When the last perfect parry landed, for anything that wants to react to it.</summary>
@@ -56,9 +57,33 @@ namespace SbgShields
 
         // ---- Pending per-hit data, consumed by the PlayerMovement patches -----
 
-        /// <summary>Velocity to add on the next FixedUpdate, correcting the launch the game already applied.</summary>
+        /// <summary>
+        /// Velocity to add on the next FixedUpdate, correcting the knockback the game
+        /// applies. An ACCUMULATOR: every hit resolved before the next physics step adds
+        /// its own delta, and only the FixedUpdate consumer (and ClearPending) empties
+        /// it. It used to be a single slot, so a second hit inside one step (a rocket
+        /// volley, a blast and its cart) wiped the first hit's correction.
+        /// </summary>
         internal static Vector3 PendingVelocityCorrection;
         internal static bool    HasPendingVelocityCorrection;
+
+        /// <summary>What the hit being resolved added to the accumulator, so a refusal can take back exactly that.</summary>
+        private static Vector3 _thisHitCorrection;
+
+        private static void AddCorrection(Vector3 delta)
+        {
+            PendingVelocityCorrection   += delta;
+            _thisHitCorrection          += delta;
+            HasPendingVelocityCorrection = PendingVelocityCorrection.sqrMagnitude > 1e-6f;
+        }
+
+        /// <summary>Called by the FixedUpdate consumer once the correction is on the body.</summary>
+        internal static void ConsumeCorrection(out Vector3 correction)
+        {
+            correction = PendingVelocityCorrection;
+            PendingVelocityCorrection    = Vector3.zero;
+            HasPendingVelocityCorrection = false;
+        }
 
         /// <summary>Applied in SetKnockOutState(InAir) to the game's knockout timer. Negative = none.</summary>
         internal static float PendingHitstunMultiplier = -1f;
@@ -117,8 +142,7 @@ namespace SbgShields
             Pips               = _pipsBeforeHit;
             BreakCooldownUntil = _breakCdBeforeHit;
             UseCooldownUntil   = _useCdBeforeHit;
-            if (Plugin.VerboseLogging.Value)
-                Plugin.Log.LogInfo($"Knockout refused: refunded {spent} pip(s). The bubble still popped, but it costs you nothing.");
+            Plugin.Log.LogInfo($"Knockout refused: refunded {spent} pip(s). The bubble still popped, but it costs you nothing.");
         }
 
         /// <summary>Set by KillZone right before it triggers the respawn, so OnRespawn does not also halve the (already reset) percent.</summary>
@@ -139,11 +163,21 @@ namespace SbgShields
             Vector3 current = Vector3.zero;
             try { current = player.Movement.Velocity; } catch { }
             // Next FixedUpdate: rb.velocity += correction. We want exactly (0, bounce, 0).
-            PendingVelocityCorrection    = Vector3.up * Mathf.Max(0f, Plugin.BreakBounceSpeed.Value) - incomingVelocityChange - current;
+            // The bounce is ABSOLUTE, so it replaces whatever the accumulator held: at
+            // TryKnockOut time the game has not yet added this hit's knockback (it adds
+            // it right after, by += or AddForce), so "- incoming - current" lands on the
+            // bounce either way.
+            Vector3 bounce = Vector3.up * Mathf.Max(0f, Plugin.BreakBounceSpeed.Value) - incomingVelocityChange - current;
+            _thisHitCorrection           = bounce - PendingVelocityCorrection;
+            PendingVelocityCorrection    = bounce;
             HasPendingVelocityCorrection = true;
             PendingHitstunMultiplier     = Mathf.Max(0.05f, Plugin.BreakStunMultiplier.Value);
             PendingIsBreak               = true;
-            Launch.Begin();   // the bounce is a launch too: tumble gravity until it lands
+            // A break is not a percent launch: no hang or drag left over from an earlier hit.
+            LaunchHangUntil = double.MinValue;
+            LaunchDragUntil = double.MinValue;
+            Launch.Begin(isBreakBounce: true);   // the bounce is a launch too: tumble gravity until it lands, but no DI
+            _launchBegunThisHit = true;
         }
 
         // ---- Where the economy is live ---------------------------------------
@@ -184,6 +218,14 @@ namespace SbgShields
             get { try { return SingletonBehaviour<DrivingRangeManager>.HasInstance; } catch { return false; } }
         }
 
+        /// <summary>
+        /// The percent that counts right now: zero outside a hole, while standing down,
+        /// or with the percent layer off. A percent left over from the last match must
+        /// not leak into the range (trails, tech gate, embers) or into a hole after
+        /// percent is switched off.
+        /// </summary>
+        internal static float EffectivePercent => Plugin.PercentEnabled.Value && InPlayableHole ? Percent : 0f;
+
         // ---- Lifecycle -------------------------------------------------------
 
         /// <summary>Wipes everything. Used when a match or a practice session starts.</summary>
@@ -197,8 +239,10 @@ namespace SbgShields
             _lastRespawnTime = double.MinValue;
             KillZone.Disarm();
             KillZone.CancelLinger();
+            Launch.Cancel();
+            DisarmParry();
             ClearPending();
-            if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Full reset ({why}): pips={Pips}, percent=0.");
+            Plugin.Log.LogInfo($"Full reset ({why}): pips={Pips}, percent=0.");
         }
 
         internal static void ResetForNewHole()
@@ -207,8 +251,12 @@ namespace SbgShields
             Percent *= 1f - Mathf.Clamp01(Plugin.PercentReductionBetweenHoles.Value);
             UseCooldownUntil   = double.MinValue;
             BreakCooldownUntil = double.MinValue;
+            KillZoneDeathPending = false;
+            _lastRespawnTime = double.MinValue;
             KillZone.Disarm();
             KillZone.CancelLinger();
+            Launch.Cancel();
+            DisarmParry();
             ClearPending();
             if (Plugin.VerboseLogging.Value)
                 Plugin.Log.LogInfo($"New hole: pips={Pips}, percent={Percent:0}");
@@ -255,10 +303,13 @@ namespace SbgShields
         {
             HasPendingVelocityCorrection = false;
             PendingVelocityCorrection = Vector3.zero;
+            _thisHitCorrection = Vector3.zero;
             PendingIsBreak           = false;
             PendingHitstunMultiplier = -1f;
             PendingPercentGain = 0f;
             PendingProjectileWasTargeted = false;
+            LaunchDragUntil = double.MinValue;
+            LaunchHangUntil = double.MinValue;
         }
 
         // ---- Activation ------------------------------------------------------
@@ -287,6 +338,7 @@ namespace SbgShields
             return true;
         }
 
+        /// <summary>Starts the use cooldown. Every raise is a commitment, whether the key let go or the game forced the drop.</summary>
         internal static void OnShieldReleased()
         {
             UseCooldownUntil = Time.timeAsDouble + Plugin.UseCooldown.Value;
@@ -438,18 +490,14 @@ namespace SbgShields
         /// tapping the shield cannot fish for a window. Every parry corresponds to a
         /// real object that was within reach at the moment you let go. It can still be
         /// a surprise -- a rocket passing by that was never aimed at you -- but that is
-        /// a catch, not a coin flip. Only a deliberate release arms anything; a shield
-        /// that broke (NotifyShieldDropped) does not.
+        /// a catch, not a coin flip. Only a deliberate release (the key going up) arms
+        /// anything; a bubble that broke or that the game forced down does not.
+        /// Teammates arm nothing: the game refuses their hits anyway.
         ///
         /// Nothing here names an item. Entity.IsPlayer and Entity.Rigidbody are the
         /// game's own classification, so an item added in a later update arms a parry
         /// the same way. The swing/projectile split on the receiving side reads the
         /// KnockoutType enum's names, so a new type sorts itself too.
-        ///
-        /// It cannot punish the attacker. Doing that means changing another player's
-        /// state, and there is nowhere to say it: the server is the stock game. The
-        /// reward has to be entirely on the defender's side, which is why it is a
-        /// refund and a sound rather than a counter-stun.
         /// </summary>
         internal static bool GameplayParryEnabled => ModHandshake.GameplayEnabled && Plugin.PerfectParry.Value;
 
@@ -472,12 +520,18 @@ namespace SbgShields
         /// <summary>Below this a thing is lying there, not coming at you. A resting ball or a placed mine arms nothing.</summary>
         private const float ThreatMinSpeed = 2f;
 
-        /// <summary>Called from Plugin.ReleaseShield while the shield collider still exists.</summary>
-        internal static void ArmParryOnRelease(PlayerInfo player)
+        /// <summary>Forget any armed parry: a forced drop, a new hole, the player's own knockout.</summary>
+        internal static void DisarmParry()
         {
             _parryArmedUntil = double.MinValue;
             _parryProjectile = _parrySwing = false;
             _parryThreat = "";
+        }
+
+        /// <summary>Called from Plugin.ReleaseShield on a deliberate release, while the shield collider still exists.</summary>
+        internal static void ArmParryOnRelease(PlayerInfo player)
+        {
+            DisarmParry();
             if (!GameplayParryEnabled || player == null) return;
 
             try
@@ -518,6 +572,9 @@ namespace SbgShields
                     {
                         if (ReferenceEquals(other, player) || !_threatSeen.Add(other)) continue;
                         string name; try { name = other.PlayerId.PlayerNameNoRichText; } catch { name = "a player"; }
+                        bool teammate = false;
+                        try { teammate = player.IsTeammateOf(other, excludeSelf: true); } catch { }
+                        if (teammate) { Reject($"{name} teammate"); continue; }   // the game never lets a teammate's swing land
                         if (dist > Plugin.ParryReach.Value + 1f) { Reject($"{name} {dist:0.0}m away"); continue; }   // a club has to be able to reach
                         var g = other.AsGolfer;
                         if (g == null || !(g.IsChargingSwing || g.IsSwinging)) { Reject($"{name} not swinging"); continue; }
@@ -596,12 +653,12 @@ namespace SbgShields
         private static bool IsSwingClassName(string n) =>
             n.IndexOf("Swing", StringComparison.Ordinal) >= 0 && n.IndexOf("Projectile", StringComparison.Ordinal) < 0;
 
+        /// <summary>The bypass branch (penalty stroke) runs before this is ever asked, so it needs no case here.</summary>
         internal static bool IsPerfectParry(int cost, bool swingClass)
         {
             if (!Plugin.PerfectParry.Value) return false;
             if (Time.timeAsDouble > _parryArmedUntil) return false;
             if (swingClass ? !_parrySwing : !_parryProjectile) return false;
-            if (cost == CostBypass)      return false;   // a penalty is not a hit you can read
             if (cost == CostUnblockable) return Plugin.PerfectParryBeatsUnblockable.Value;
             if (cost == CostFullBreak)   return Plugin.PerfectParryBeatsFullBreak.Value;
             return true;
@@ -614,30 +671,36 @@ namespace SbgShields
         /// A hit arriving within ParryCoverWindow of a parry, of the same class, is part
         /// of the same read: a rocket volley, a ball and the thing it knocked loose. The
         /// arm itself is still spent by the first hit, so nothing new can be fished for.
+        /// It obeys the same rules as the parry itself: never an unblockable, and a
+        /// full-break hit only if PerfectParryBeatsFullBreak allows it.
         /// </summary>
-        private static bool CoveredByRecentParry(bool swingClass) =>
-            LastParryAt > double.MinValue
+        private static bool CoveredByRecentParry(int cost, bool swingClass) =>
+            cost != CostUnblockable
+            && (cost != CostFullBreak || Plugin.PerfectParryBeatsFullBreak.Value)
+            && LastParryAt > double.MinValue
             && Time.timeAsDouble - LastParryAt <= Mathf.Max(0f, Plugin.ParryCoverWindow.Value)
             && swingClass == _lastParrySwingClass;
 
-        private static void Parry(PlayerInfo player, string what, int cost)
+        private static void Parry(PlayerInfo player, string what, int cost, bool swingClass)
         {
             LastParryAt = Time.timeAsDouble;
-            _lastParrySwingClass = _parrySwing && !_parryProjectile ? true : (_parryProjectile && !_parrySwing ? false : IsSwingClassName(what));
+            _lastParrySwingClass = swingClass;
             _parryArmedUntil = double.MinValue;   // one release, one parry
             if (Plugin.PerfectParryRefundsUse.Value) UseCooldownUntil = double.MinValue;
-            ParryFx.Play(player);   // flash, burst, sound, shake -- the same thing everyone else sees over SbgNet
 
-            Plugin.Log.LogInfo($"PERFECT PARRY on {what} ({(Time.timeAsDouble - LoweredAt) * 1000.0:0} ms after release; armed by {_parryThreat}; would have cost {CostLabel(cost)}). {Pips} pips kept.");
-            SbgNet.Send(SbgNet.Kind.Parry, 0f);   // so everyone else sees and hears it too
+            Plugin.Log.LogInfo($"PERFECT PARRY on {what} ({(Time.timeAsDouble - LoweredAt) * 1000.0:0} ms after release; armed by {_parryThreat}; would have cost {CostLabel(cost)}). {Pips} pips kept, shove cancelled.");
+
+            // The parry has already happened by here. A failure in the effects or the
+            // message must not throw out of the TryKnockOut prefix: that runs inside the
+            // game's hit handler, and an exception there makes Mirror drop the connection.
+            try { ParryFx.Play(player); }   // flash, burst, sound, shake -- the same thing everyone else sees over SbgNet
+            catch (Exception e) { Plugin.Log.LogWarning("Parry effects failed: " + e.Message); }
+            try { SbgNet.Send(SbgNet.Kind.Parry, 0f); }   // so everyone else sees and hears it too
+            catch (Exception e) { Plugin.Log.LogWarning("Parry message failed: " + e.Message); }
         }
 
         private static string CostLabel(int cost) =>
             cost == CostFullBreak ? "a break" : cost == CostUnblockable ? "an unblockable" : cost == CostBypass ? "nothing (bypasses the bubble)" : cost + " pips";
-
-        internal static float GetPercentGain(int cost) => GetPercentGain(cost, null, -1f);
-
-        internal static float GetPercentGain(int cost, KnockoutType? type) => GetPercentGain(cost, type, -1f);
 
         /// <summary>
         /// Percent scales with how hard the hit was: the game's own knockback speed for
@@ -710,9 +773,10 @@ namespace SbgShields
         /// Returns true if the vanilla knockout should proceed, false if the
         /// shield fully absorbed the hit and the knockout must be skipped.
         /// </summary>
-        internal static bool ResolveKnockout(PlayerInfo player, KnockoutType type, Vector3 incomingVelocityChange)
+        internal static bool ResolveKnockout(PlayerInfo player, PlayerInfo responsiblePlayer, KnockoutType type, Vector3 incomingVelocityChange)
         {
             ClearPendingHitOnly();
+            _pendingType = type;
 
             // Standing down (public lobby, version mismatch): hand the hit straight
             // back to the game. This has to be here, above the absorb branch, or the
@@ -734,15 +798,36 @@ namespace SbgShields
             bool targeted = PendingProjectileWasTargeted;
             PendingProjectileWasTargeted = false;
 
-            int   cost     = GetCost(type, targeted);
+            int  cost      = GetCost(type, targeted);
+            bool swing     = IsSwingClass(type);
+            bool lingering = Plugin.ShieldLingering;
+            bool shieldUp  = player.IsElectromagnetShieldActive;
             _awaitingResult = false;
             ForcingBreakKnockout = false;
-            SnapshotForRefund(player.IsElectromagnetShieldActive && Plugin.WeActivated);
+            SnapshotForRefund(shieldUp && Plugin.WeActivated);
 
-            if (player.IsElectromagnetShieldActive && !Plugin.WeActivated && !Plugin.ShieldLingering)
+            if (shieldUp && !Plugin.WeActivated && !lingering)
             {
                 // The vanilla magnet item's shield: leave it entirely to the game.
                 // A lingering shield is still ours, so it must not fall in here.
+                return true;
+            }
+
+            // The game's own refusals come FIRST: a teammate's hit, comeback immunity,
+            // domination protection, a frozen body. The game would refuse these with its
+            // own blocked effect, so the bubble must not spend pips on them, a parry must
+            // not fire on them, and nothing must be queued. Hand them back untouched.
+            bool alreadyDown = false;
+            try { alreadyDown = player.Movement != null && player.Movement.IsKnockedOut; } catch { }
+
+            if (GameRefuses(player, responsiblePlayer, type, out string refusedBy))
+            {
+                // The game still applies a refused hit's knockback. On a body that is
+                // already down (the air hold raises the comeback shield mid-tumble) that
+                // meant being juggled round the sky, so it moves nothing; standing up, a
+                // refused hit keeps the game's shove.
+                if (alreadyDown) AddCorrection(-incomingVelocityChange);
+                Plugin.Log.LogInfo($"Hit {type} refused by the game ({refusedBy}){(alreadyDown ? ": shove cancelled" : "")}; the bubble is not involved.");
                 return true;
             }
 
@@ -751,26 +836,25 @@ namespace SbgShields
             // hit lands on the body like any other. Above the parry on purpose.
             if (cost == CostBypass)
             {
-                if (player.IsElectromagnetShieldActive) Plugin.DropShieldQuietly($"{type} goes through the bubble");
-                if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"{type} bypasses the bubble: ordinary hit.");
+                if (shieldUp) Plugin.DropShieldQuietly($"{type} goes through the bubble");
+                shieldUp = false;
             }
             // Perfect parry. Checked here, ABOVE the shielded branch, because the whole
             // point is that the shield is already down by the time the hit arrives --
-            // inside that branch it could never fire.
-            else if (IsPerfectParry(cost, IsSwingClass(type)))
+            // inside that branch it could never fire. Never on a body that is already
+            // knocked out: an arm left over from before your own knockout is not a read.
+            else if (!alreadyDown && IsPerfectParry(cost, swing))
             {
-                Parry(player, type.ToString(), cost);
-                PendingVelocityCorrection    = -incomingVelocityChange;
-                HasPendingVelocityCorrection = true;
+                Parry(player, type.ToString(), cost, swing);
+                AddCorrection(-incomingVelocityChange);
                 return false;
             }
             // The tail of a parry: a second hit of the same class right behind the one
-            // that was read (the next rocket of a volley). Unblockables are never covered.
-            else if (cost != CostUnblockable && cost != CostBypass && CoveredByRecentParry(IsSwingClass(type)))
+            // that was read (the next rocket of a volley).
+            else if (!alreadyDown && CoveredByRecentParry(cost, swing))
             {
-                Plugin.Log.LogInfo($"PARRY also covers {type} ({(Time.timeAsDouble - LastParryAt) * 1000.0:0} ms after the parry; would have cost {CostLabel(cost)}).");
-                PendingVelocityCorrection    = -incomingVelocityChange;
-                HasPendingVelocityCorrection = true;
+                Plugin.Log.LogInfo($"PARRY also covers {type} ({(Time.timeAsDouble - LastParryAt) * 1000.0:0} ms after the parry; would have cost {CostLabel(cost)}; shove cancelled).");
+                AddCorrection(-incomingVelocityChange);
                 return false;
             }
 
@@ -779,10 +863,13 @@ namespace SbgShields
             // The game does not know that: its own CanBeKnockedOutBy refuses every
             // ordinary hit while the shield flag is up, so the body has to actually go
             // before the hit can land, or the linger is a free block after every release.
-            if (player.IsElectromagnetShieldActive && Plugin.ShieldLingering)
+            if (shieldUp && lingering)
+            {
                 Plugin.DropShieldQuietly($"{type} arrived during the linger");
+                shieldUp = false;
+            }
 
-            if (player.IsElectromagnetShieldActive && Plugin.ShieldAbsorbsHits.Value && !Plugin.ShieldLingering)
+            if (shieldUp && Plugin.ShieldAbsorbsHits.Value)
             {
                 LastKnockoutChargeTime = Time.timeAsDouble;
 
@@ -790,7 +877,7 @@ namespace SbgShields
                 {
                     // Shield drops, hit lands in full. No in-place stun: the hit itself stuns.
                     Break(player, playBreakEffect: true);
-                    if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Shield hit by unblockable {type}: broken, hit goes through.");
+                    Plugin.Log.LogInfo($"Bubble hit by unblockable {type}: broken, the hit goes through.");
                 }
                 else if (cost == CostFullBreak || cost >= Pips)
                 {
@@ -799,11 +886,6 @@ namespace SbgShields
                     // is percent only: a full-break type (swing, rocket) counts as
                     // PercentGainOnFullBreak of its percent; a costed hit that beat your
                     // remaining pips counts the fraction that was not covered.
-                    //
-                    // History: partial breaks used to launch you at that fraction AND cut
-                    // the hitstun to that fraction, so a landmine popping your last two
-                    // pips gave a third of a vanilla knockdown. That was the "instant
-                    // wake-up" bug; it lived on behind PartialBreakLaunches until 0.7.8.
                     float excess = (cost == CostFullBreak) ? Plugin.PercentGainOnFullBreak.Value : 1f - (float)Pips / cost;
                     int before = Pips;
                     Break(player, playBreakEffect: true);
@@ -811,8 +893,8 @@ namespace SbgShields
                     QueueBreakBounce(player, incomingVelocityChange);
                     BreakTrace.Begin(3f);
                     BreakTrace.Log($"BUBBLE BREAK by {type} ({before} pips vs cost {cost}): bounce {Plugin.BreakBounceSpeed.Value:0.0} m/s up, stun x{PendingHitstunMultiplier:0.00}");
-                    PendingPercentGain           = GetPercentGain(cost, type, incomingVelocityChange.magnitude) * Mathf.Clamp01(excess);
-                    if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"BUBBLE BREAK by {type} ({before} pips). Bounced, +{PendingPercentGain:0}%.");
+                    PendingPercentGain = GetPercentGain(cost, type, incomingVelocityChange.magnitude) * Mathf.Clamp01(excess);
+                    _pendingLandedLine = $"Bubble broken by {type}: bounced, +{PendingPercentGain:0}%.";
                     _awaitingResult = true;
                     ForcingBreakKnockout = Plugin.BreakStunIgnoresComebackImmunity.Value;
                     return true;
@@ -820,27 +902,24 @@ namespace SbgShields
                 else
                 {
                     LosePips(cost);
-                    if (Plugin.AbsorbedHitsCancelKnockback.Value)
-                    {
-                        PendingVelocityCorrection    = -incomingVelocityChange;
-                        HasPendingVelocityCorrection = true;
-                    }
-                    PlayAbsorbSparks(player);
-                    if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Shield absorbed {type}: -{cost} pips, {Pips} left.");
+                    bool cancelled = Plugin.AbsorbedHitsCancelKnockback.Value;
+                    if (cancelled) AddCorrection(-incomingVelocityChange);
+                    if (GameShowsNoSparksFor(type)) PlayAbsorbSparks(player);
+                    Plugin.Log.LogInfo($"Bubble absorbed {type}: -{cost} pips{(cancelled ? ", shove cancelled" : "")}.");
                     return false;
                 }
             }
 
+            string fromWhere = IsExplosive(type) ? $" from {PendingHitDistance:0.0}m" : "";
+
             // Hit while already knocked out (stunned in place or mid-tumble): the game's
             // own knockback, no percent scaling, no shaping. Percent still accrues.
-            bool alreadyDown = false;
-            try { alreadyDown = player.Movement != null && player.Movement.IsKnockedOut; } catch { }
             if (alreadyDown)
             {
                 _pendingWhileDown = true;
                 _pendingIncoming  = incomingVelocityChange;
-                PendingPercentGain        = GetPercentGain(cost, type, incomingVelocityChange.magnitude);
-                if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Hit {type} while down: vanilla knockback, +{PendingPercentGain:0}% pending.");
+                PendingPercentGain = GetPercentGain(cost, type, incomingVelocityChange.magnitude);
+                _pendingLandedLine = $"Hit {type} landed while down{fromWhere}: vanilla knockback {incomingVelocityChange.magnitude:0.0} m/s, +{PendingPercentGain:0}%.";
                 _awaitingResult = true;
                 return true;
             }
@@ -850,7 +929,7 @@ namespace SbgShields
             // layer switched off: that is what "off" means.
             if (!InPlayableHole || !Plugin.PercentEnabled.Value)
             {
-                if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo($"Hit {type} {(Plugin.PercentEnabled.Value ? "outside a hole" : "with percent off")}: vanilla knockback, no percent.");
+                _pendingLandedLine = $"Hit {type} landed{fromWhere} ({(Plugin.PercentEnabled.Value ? "outside a hole" : "percent off")}): vanilla launch {incomingVelocityChange.magnitude:0.0} m/s, no percent.";
                 _awaitingResult = true;
                 return true;
             }
@@ -899,8 +978,7 @@ namespace SbgShields
             }
 
             Vector3 shaped = ShapeLaunch(player, launchIn, cat);
-            PendingVelocityCorrection    = shaped - incomingVelocityChange;
-            HasPendingVelocityCorrection = PendingVelocityCorrection.sqrMagnitude > 1e-6f;
+            AddCorrection(shaped - incomingVelocityChange);
             PendingHitstunMultiplier     = Mathf.Max(0.05f, hitstunMult);
             PendingPercentGain           = GetPercentGain(cost, type, incomingVelocityChange.magnitude);
             LaunchDragUntil              = Time.timeAsDouble + Plugin.LaunchDragDuration.Value;
@@ -909,21 +987,110 @@ namespace SbgShields
             // 70% launch barely lingers, a 150% one floats at the top for everyone to see.
             LaunchHangScale              = Mathf.InverseLerp(Plugin.CloudHitMinPercent.Value, Mathf.Max(Plugin.CloudHitMinPercent.Value + 1f, Plugin.HangFullPercent.Value), Percent);
             Launch.Begin();
-            // Always on, one line per hit that lands: what hit you, from how far, at what
-            // percent, and how hard. "I got knocked back after X" starts here.
-            Plugin.Log.LogInfo($"Hit {type} landed at {Percent:0}%{(explosive ? $" from {PendingHitDistance:0.0}m" : "")}: +{PendingPercentGain:0}%, launch {shaped.magnitude:0.0} m/s" +
-                               (Plugin.VerboseLogging.Value ? $" [{cat}] force x{forceMult:0.00} x{catScale:0.00}, |v| {incomingVelocityChange.magnitude:0.0} (h {new Vector2(shaped.x, shaped.z).magnitude:0.0}, up {shaped.y:0.0}), hitstun x{PendingHitstunMultiplier:0.00}" : "") + ".");
+            _launchBegunThisHit = true;
+            // Printed from OnKnockoutResolved only if the knockout really happens: one
+            // line per hit that lands, so "I got knocked back after X" starts here.
+            _pendingLandedLine = $"Hit {type} landed at {Percent:0}%{fromWhere}: +{PendingPercentGain:0}%, launch {shaped.magnitude:0.0} m/s" +
+                                 (Plugin.VerboseLogging.Value ? $" [{cat}] force x{forceMult:0.00} x{catScale:0.00}, |v| {incomingVelocityChange.magnitude:0.0} (h {new Vector2(shaped.x, shaped.z).magnitude:0.0}, up {shaped.y:0.0}), hitstun x{PendingHitstunMultiplier:0.00}" : "") + ".";
             _awaitingResult = true;
             return true;
         }
 
-        /// <summary>While set, the FixedUpdate patch applies extra air drag for the fast-then-floaty arc.</summary>
-        /// <summary>Hang time is active until this moment; set with the launch.</summary>
+        // ---- Per-hit bookkeeping for OnKnockoutResolved -------------------------
+
+        private static KnockoutType _pendingType;
+        private static bool   _launchBegunThisHit;
+        private static string _pendingLandedLine;
+
+        /// <summary>
+        /// Would the game refuse this knockout on its own? The same checks, in the same
+        /// order, as the game's CanBeKnockedOutBy minus the shield (deciding the shield is
+        /// our job): teammate protection, comeback immunity, domination protection, frozen.
+        /// The teammate rule mirrors TryKnockOut's DoesBypassTeamProtection.
+        /// </summary>
+        private static bool GameRefuses(PlayerInfo player, PlayerInfo responsible, KnockoutType type, out string why)
+        {
+            why = null;
+            var mv = player.Movement;
+            if (mv == null) return false;
+            try
+            {
+                if (responsible != null && !BypassesTeamProtection(type) && player.IsTeammateOf(responsible, excludeSelf: true)) { why = "teammate"; return true; }
+                if (mv.KnockoutImmunityStatus.hasImmunity) { why = "comeback shield"; return true; }
+                if (responsible != null && mv.IsKnockoutProtectedFromPlayer(responsible)) { why = "domination protection"; return true; }
+                if (player.AsHittable != null && player.AsHittable.FrozenState == FrozenState.Frozen) { why = "frozen"; return true; }
+            }
+            catch (Exception e)
+            {
+                if (!_refusalCheckWarned) { _refusalCheckWarned = true; Plugin.Log.LogWarning("Could not read the game's knockout rules: " + e.Message); }
+            }
+            return false;
+        }
+        private static bool _refusalCheckWarned;
+
+        /// <summary>The game's DoesBypassTeamProtection (PlayerMovement.TryKnockOut), copied: which hits ignore teammate protection.</summary>
+        private static bool BypassesTeamProtection(KnockoutType t)
+        {
+            switch (t)
+            {
+                case KnockoutType.DuelingPistol:
+                case KnockoutType.DeflectedDuelingPistolShot:
+                case KnockoutType.ElephantGun:
+                case KnockoutType.DeflectedElephantGunShot:
+                    return !MatchSetupRules.GetValueAsBool(MatchSetupRules.Rule.FirearmTeammateProtection);
+                case KnockoutType.GolfCart:
+                    return !MatchSetupRules.GetValueAsBool(MatchSetupRules.Rule.GolfCartTeammateProtection);
+                case KnockoutType.Landmine:
+                case KnockoutType.Rocket:
+                case KnockoutType.RocketBackBlast:
+                case KnockoutType.ReflectedRocket:
+                case KnockoutType.ElectromagnetShieldExplosion:
+                case KnockoutType.OrbitalLaserPeripheralHit:
+                case KnockoutType.OrbitalLaserDirectHit:
+                case KnockoutType.OrbitalLaserElectromagnetShieldDirectHit:
+                case KnockoutType.ThunderstormPeripheralHit:
+                case KnockoutType.ThunderstormDirectHit:
+                case KnockoutType.ThunderstormElectromagnetShieldDirectHit:
+                case KnockoutType.RailgunDirectHit:
+                case KnockoutType.RailgunElectromagnetShieldHit:
+                    return !MatchSetupRules.GetValueAsBool(MatchSetupRules.Rule.ExplosionTeammateProtection);
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Hit types whose caller in the game plays no shield-hit effect when the knockout
+        /// is refused with the shield up: balls, guns and the magnet explosion. Everything
+        /// else (rockets, mines, edge hits, carts, rocket-driver hits) already gets the
+        /// game's own sparks, and playing ours as well showed two bursts.
+        /// </summary>
+        private static bool GameShowsNoSparksFor(KnockoutType t)
+        {
+            switch (t)
+            {
+                case KnockoutType.SwingProjectile:
+                case KnockoutType.ReflectedSwingProjectile:
+                case KnockoutType.RocketDriverSwingProjectile:
+                case KnockoutType.JumboBurgerGiantSwingProjectile:
+                case KnockoutType.DuelingPistol:
+                case KnockoutType.DeflectedDuelingPistolShot:
+                case KnockoutType.ElephantGun:
+                case KnockoutType.DeflectedElephantGunShot:
+                case KnockoutType.ElectromagnetShieldExplosion:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>Hang time is active until this moment; set with a percent launch.</summary>
         internal static double LaunchHangUntil = double.MinValue;
 
         /// <summary>How strongly this particular launch floats, 0-1 by percent.</summary>
         internal static float LaunchHangScale;
 
+        /// <summary>While set, the FixedUpdate patch applies extra air drag for the fast-then-floaty arc.</summary>
         internal static double LaunchDragUntil = double.MinValue;
 
         // ---- Hit categories --------------------------------------------------
@@ -1030,44 +1197,61 @@ namespace SbgShields
             return hDir * hSpeed + Vector3.up * vSpeed;
         }
 
-        /// <summary>Called from the TryKnockOut postfix. Commits percent only if the knockout really happened.</summary>
+        /// <summary>
+        /// Called from the TryKnockOut postfix, which Harmony runs even when our prefix
+        /// skipped the original. Commits percent only if the knockout really happened.
+        ///
+        /// The refusal cleanup runs only for a hit we actually handed to the game
+        /// (_awaitingResult). A parry, a parry-cover or an absorb also arrives here with
+        /// knockedOut false, because the prefix returned false; until 0.7.34 the cleanup
+        /// ran for those too and wiped the shove cancel they had just queued, so a
+        /// perfect parry still threw you at full force.
+        /// </summary>
         internal static void OnKnockoutResolved(bool knockedOut)
         {
-            if (knockedOut && PendingPercentGain > 0f)
-                AddPercent(PendingPercentGain);
-            PendingPercentGain = 0f;
-            if (knockedOut && InPlayableHole && Plugin.KillZoneEnabled.Value && Percent >= Plugin.KillPercent.Value && !KillZone.IsArmed)
-                KillZone.Arm();
-            if (!knockedOut)
+            if (knockedOut)
             {
-                // Only refund when a knockout was actually attempted; an absorbed chip
-                // hit also lands here with knockedOut false and must keep its cost.
-                if (_awaitingResult && Plugin.RefundPipsOnRefusedKnockout.Value) RefundRefusedHit();
-                // Vanilla refused (immunity, team protection, frozen, self-hit). Drop BOTH the
-                // stale hitstun and the shaped launch, otherwise you get a boosted percent
-                // launch with no stun -- a free gap-clear.
+                if (PendingPercentGain > 0f) AddPercent(PendingPercentGain);
+                if (_pendingLandedLine != null) Plugin.Log.LogInfo(_pendingLandedLine);
+                if (InPlayableHole && Plugin.PercentEnabled.Value && Plugin.KillZoneEnabled.Value && Percent >= Plugin.KillPercent.Value && !KillZone.IsArmed)
+                    KillZone.Arm();
+                // Your own knockout spends any parry still armed from before it.
+                DisarmParry();
+            }
+            else if (_awaitingResult)
+            {
+                // Vanilla refused a hit we handed it (self-hit, giant form, or a refusal
+                // our pre-check could not see). Hand back what was spent, and take back
+                // only what THIS hit queued: a boosted launch with no stun is a free
+                // gap-clear, but an earlier hit in the same physics step keeps its own.
+                if (Plugin.RefundPipsOnRefusedKnockout.Value) RefundRefusedHit();
                 PendingIsBreak           = false;
                 PendingHitstunMultiplier = -1f;
-                HasPendingVelocityCorrection = false;
-                PendingVelocityCorrection    = Vector3.zero;
-                LaunchDragUntil = double.MinValue;
+                PendingVelocityCorrection   -= _thisHitCorrection;
+                HasPendingVelocityCorrection = PendingVelocityCorrection.sqrMagnitude > 1e-6f;
+                if (_launchBegunThisHit)
+                {
+                    Launch.Cancel();
+                    LaunchDragUntil = double.MinValue;
+                    LaunchHangUntil = double.MinValue;
+                }
 
                 // Refused while already down: the comeback shield stopped the knockout, but
                 // the game still shoves the body. Immune-and-tumbling used to mean being
                 // juggled around the sky, never landing, until the 10 s time-out forced a
                 // wake-up under the gold shield. A refused hit on a downed body moves nothing.
-                if (_pendingWhileDown)
-                {
-                    PendingVelocityCorrection    = -_pendingIncoming;
-                    HasPendingVelocityCorrection = _pendingIncoming.sqrMagnitude > 1e-6f;
-                    if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo("Hit refused while down: shove cancelled.");
-                }
+                if (_pendingWhileDown) AddCorrection(-_pendingIncoming);
+
+                Plugin.Log.LogInfo($"Hit {_pendingType} refused by the game: no stun{(_pendingWhileDown ? ", shove cancelled" : "")}.");
                 BreakTrace.Log("game REFUSED the knockout: no stun will happen");
-                if (Plugin.VerboseLogging.Value) Plugin.Log.LogInfo("Knockout refused by the game (immunity/team/self/frozen); launch shaping discarded, no stun.");
             }
+            PendingPercentGain = 0f;
             _awaitingResult = false;
             ForcingBreakKnockout = false;
             _pendingWhileDown = false;
+            _launchBegunThisHit = false;
+            _pendingLandedLine = null;
+            _thisHitCorrection = Vector3.zero;
         }
 
         private static bool    _pendingWhileDown;
@@ -1112,7 +1296,7 @@ namespace SbgShields
             // A reflection never reaches TryKnockOut, so the parry check in
             // ResolveKnockout never sees it. Without this, timing a shield onto a rocket
             // would bounce it and still cost you the pips.
-            if (IsPerfectParry(cost, swingClass: false)) { Parry(player, "reflected " + what, cost); return; }
+            if (IsPerfectParry(cost, swingClass: false)) { Parry(player, "reflected " + what, cost, swingClass: false); return; }
 
             if (cost == CostFullBreak || cost >= Pips)
             {
@@ -1168,20 +1352,24 @@ namespace SbgShields
         }
 
         /// <summary>
-        /// With the bubble no longer a physical wall (Bubble.BubbleReflects off) nothing
-        /// collides with it, so the game never plays its own hit sparks. Play them at the
-        /// point on the bubble facing where the hit came from, for everyone.
+        /// With the bubble no longer a physical wall (Bubble.BubbleReflects off), balls,
+        /// guns and the magnet explosion reach the body without the game playing any
+        /// shield sparks (see GameShowsNoSparksFor). Play them at the point on the bubble
+        /// facing where the hit came from, for everyone. The game's offset argument is in
+        /// world space from the bubble's centre; the hit origin arrives in the player's
+        /// local space, so it is converted first.
         /// </summary>
         private static void PlayAbsorbSparks(PlayerInfo player)
         {
             if (Plugin.BubbleReflects.Value) return;   // the collision already did it
             try
             {
-                float r = 1f;
                 var col = player.ElectromagnetShieldCollider;
-                if (col != null) r = col.radius;
-                Vector3 local = PendingHitLocalOrigin.sqrMagnitude > 0.01f ? PendingHitLocalOrigin.normalized * r : Vector3.up * r;
-                player.PlayElectromagnetShieldHitForAllClients(local, isExplosion: false);
+                float r = col != null ? col.radius : 1f;
+                Vector3 centre = col != null ? col.transform.position : player.transform.position + Vector3.up * 0.9f;
+                Vector3 dir = player.transform.TransformPoint(PendingHitLocalOrigin) - centre;
+                if (dir.sqrMagnitude < 0.01f) dir = Vector3.up;
+                player.PlayElectromagnetShieldHitForAllClients(dir.normalized * r, isExplosion: false);
             }
             catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Absorb sparks: " + e.Message); }
         }
@@ -1192,12 +1380,11 @@ namespace SbgShields
             double now = Time.timeAsDouble;
             BreakCooldownUntil = now + Plugin.BreakCooldown.Value;
             UseCooldownUntil   = Math.Max(UseCooldownUntil, now + Plugin.UseCooldown.Value);
+            DisarmParry();
 
-            if (player.IsElectromagnetShieldActive)
-            {
-                // explode:false -- the vanilla explode path fires an AoE hit on everyone nearby.
-                player.LocalPlayerCancelElectromagnetShield(false);
-            }
+            // A break snaps the bubble off: no soft release dissolve under the shatter,
+            // on any screen. Never the game's explode path, which hits everyone nearby.
+            Plugin.SnapOffShield(player, "broken");
             Plugin.NotifyShieldDropped();
 
             if (playBreakEffect)
@@ -1271,15 +1458,18 @@ namespace SbgShields
                         && !CurrentKnockoutIsBreak   // the break bounce is the one stun you sit through
                         && (Plugin.TechSelfInflicted.Value || !CurrentKnockoutSelfInflicted)   // no free movement tech off your own rocket
                         && pressed && bigEnough;
+            bool held = AirHold.IsHolding;
             if (tech) { _techPending = true; return; }
             if (pressed && !bigEnough && Plugin.TechEnabled.Value && !CurrentKnockoutIsBreak)
-                Plugin.Log.LogInfo($"TECH refused: launch too small to tech (no smoke trail; needs {Plugin.LaunchTrailStartSpeed.Value:0} m/s at {Plugin.LaunchTrailMinPercent.Value:0}%+, you were at {Percent:0}%).");
+                Plugin.Log.LogInfo($"TECH refused: launch too small to tech (no smoke trail; needs {Plugin.LaunchTrailStartSpeed.Value:0} m/s at {Plugin.LaunchTrailMinPercent.Value:0}%+, you were at {EffectivePercent:0}%).");
 
             // No tech: the flight WAS the stun. Start the get-up shortly after touchdown
             // instead of lying there for whatever is left of the game's own timer (3 s
             // by its constants), which is why a short launch felt like a longer stun
-            // than a huge one.
-            if (!CurrentKnockoutIsBreak && !Plugin.PercentEnabled.Value) return;   // percent off = the game's own stun
+            // than a huge one. With percent off the game's own stun stands -- unless the
+            // air hold kept you down past it, in which case the game's timer is spent
+            // and the landing stun is the get-up delay.
+            if (!CurrentKnockoutIsBreak && !Plugin.PercentEnabled.Value && !held) return;
             float stun = Mathf.Max(0f, CurrentKnockoutIsBreak ? Plugin.BreakLandingStun.Value : Plugin.LandingStun.Value);
             // A floor on the whole thing, hit to get-up. "The flight is the stun" alone
             // was silly at low percent: a one-second hop and you were up. So: the flight
@@ -1290,9 +1480,18 @@ namespace SbgShields
             // is left, which is what gives it a purpose on the hits that need one.
             float sinceHit = (float)(now - mv.IsKnockedOutTimestamp);
             float floorTotal = CurrentKnockoutIsBreak ? Plugin.BreakMinStun.Value : Plugin.MinStunAfterHit.Value;
+            if (!CurrentKnockoutIsBreak && !Plugin.PercentEnabled.Value) floorTotal = 0f;   // floors belong to the percent layer
             float floor = Mathf.Max(0f, floorTotal - sinceHit);
             stun = Mathf.Max(stun, floor);
-            if (HitstunPatch.ClampRecoveryTimer(mv, stun, out float before) && before > stun)
+            if (held)
+            {
+                // The hold pinned the game's timer near zero so its ground check could run;
+                // SET it now so the landing stun and the floors still apply.
+                if (HitstunPatch.SetRecoveryTimer(mv, stun))
+                    Plugin.Log.LogInfo($"Landed{(CurrentKnockoutIsBreak ? " from a break" : "")} {sinceHit:0.00}s after the hit, after the air hold: get-up in {stun:0.00}s.");
+                AirHold.Released(mv, "landed");
+            }
+            else if (HitstunPatch.ClampRecoveryTimer(mv, stun, out float before) && before > stun)
                 Plugin.Log.LogInfo($"Landed{(CurrentKnockoutIsBreak ? " from a break" : "")} {sinceHit:0.00}s after the hit: get-up in {stun:0.00}s (the game's timer had {before:0.00}s left).");
         }
 
@@ -1338,11 +1537,16 @@ namespace SbgShields
             return true;
         }
 
+        /// <summary>
+        /// Per-hit state only. The velocity accumulator is deliberately NOT touched: it
+        /// belongs to the physics step, and an earlier hit in the same step keeps its part.
+        /// </summary>
         private static void ClearPendingHitOnly()
         {
             _pendingWhileDown = false;
-            HasPendingVelocityCorrection = false;
-            PendingVelocityCorrection = Vector3.zero;
+            _thisHitCorrection = Vector3.zero;
+            _launchBegunThisHit = false;
+            _pendingLandedLine = null;
             PendingIsBreak           = false;
             PendingHitstunMultiplier = -1f;
             PendingPercentGain = 0f;

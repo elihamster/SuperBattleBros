@@ -84,6 +84,15 @@ namespace SbgShields
         /// </summary>
         internal static double LocalBigLaunchAt = double.MinValue;
 
+        /// <summary>
+        /// The percent half of the smoke (and tech) rule for the local player. Where there
+        /// is no percent -- the layer switched off, or outside a hole -- speed alone
+        /// decides, so a fast tumble in the range smokes and can be teched for practice.
+        /// A percent left over from the last match no longer counts there.
+        /// </summary>
+        internal static bool PercentGateOpen(float percent) =>
+            !Plugin.PercentEnabled.Value || !ShieldState.InPlayableHole || percent >= Plugin.LaunchTrailMinPercent.Value || KillZone.IsArmed;
+
         private static void TrackLocalBigLaunch()
         {
             try
@@ -92,7 +101,7 @@ namespace SbgShields
                 var mv = local != null ? local.Movement : null;
                 if (mv == null || !mv.IsKnockedOutOrRecovering || mv.IsGrounded) return;
                 if (LocalBigLaunchAt >= mv.IsKnockedOutTimestamp) return;   // already counted for this knockout
-                bool percentOk = !Plugin.PercentEnabled.Value || ShieldState.Percent >= Plugin.LaunchTrailMinPercent.Value || KillZone.IsArmed;
+                bool percentOk = PercentGateOpen(ShieldState.Percent);
                 if (percentOk && mv.Velocity.magnitude >= Plugin.LaunchTrailStartSpeed.Value) LocalBigLaunchAt = Time.timeAsDouble;
             }
             catch { }
@@ -140,10 +149,9 @@ namespace SbgShields
                 // Percent gate. Ours we know; theirs we know once SbgNet has told us,
                 // and until then the speed rule alone decides.
                 float theirPct;
-                bool percentOk = !Plugin.PercentEnabled.Value ||
-                                 (ReferenceEquals(p, local)
-                                     ? ShieldState.Percent >= Plugin.LaunchTrailMinPercent.Value || KillZone.IsArmed
-                                     : !SbgNet.TryGetPercent(p, out theirPct) || theirPct >= Plugin.LaunchTrailMinPercent.Value);
+                bool percentOk = ReferenceEquals(p, local)
+                                     ? PercentGateOpen(ShieldState.Percent)
+                                     : !Plugin.PercentEnabled.Value || !SbgNet.TryGetPercent(p, out theirPct) || theirPct >= Plugin.LaunchTrailMinPercent.Value;
 
                 _trails.TryGetValue(p, out var t);
 
@@ -332,7 +340,7 @@ namespace SbgShields
                 if (p == null) continue;
                 bool isLocal = ReferenceEquals(p, local);
                 float pct;
-                if (isLocal) pct = ShieldState.InPlayableHole ? ShieldState.Percent : 0f;
+                if (isLocal) pct = ShieldState.EffectivePercent;
                 else if (!SbgNet.TryGetPercent(p, out pct)) pct = 0f;
 
                 bool want = layerOn && pct >= min && !(isLocal && KillZone.IsLingering);
@@ -373,11 +381,11 @@ namespace SbgShields
                 if (_rageMat == null) _rageMat = MakeUnlitMaterial(_emberTex, additive: true, intensity: Plugin.BitsGlow.Value);
                 if (_rageMat == null) return null;
 
-                var _rageGo = new GameObject("SbgRageEmbers");
-                var _ragePs = _rageGo.AddComponent<ParticleSystem>();
-                _ragePs.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                var rageGo = new GameObject("SbgRageEmbers");
+                var ragePs = rageGo.AddComponent<ParticleSystem>();
+                ragePs.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
 
-                var main = _ragePs.main;
+                var main = ragePs.main;
                 main.simulationSpace = ParticleSystemSimulationSpace.World;
                 main.loop = true; main.playOnAwake = false;
                 main.startLifetime = new ParticleSystem.MinMaxCurve(0.45f, 0.9f);
@@ -386,32 +394,32 @@ namespace SbgShields
                 main.gravityModifier = -0.15f;             // embers drift up
                 main.maxParticles = 200;
 
-                var shape = _ragePs.shape;
+                var shape = ragePs.shape;
                 shape.enabled = true; shape.shapeType = ParticleSystemShapeType.Sphere; shape.radius = 0.45f;
 
                 // Unity insists all three axes share a curve mode, or it logs
                 // "Particle Velocity curves must all be in the same mode" every frame
                 // from every worker thread. Two-constants on all three.
-                var vel = _ragePs.velocityOverLifetime;
+                var vel = ragePs.velocityOverLifetime;
                 vel.enabled = true; vel.space = ParticleSystemSimulationSpace.World;
                 vel.x = new ParticleSystem.MinMaxCurve(-0.2f, 0.2f);
                 vel.y = new ParticleSystem.MinMaxCurve(0.8f, 1.8f);
                 vel.z = new ParticleSystem.MinMaxCurve(-0.2f, 0.2f);
 
-                var sol = _ragePs.sizeOverLifetime; sol.enabled = true;
+                var sol = ragePs.sizeOverLifetime; sol.enabled = true;
                 sol.size = new ParticleSystem.MinMaxCurve(1f, new AnimationCurve(new Keyframe(0f, 1f), new Keyframe(1f, 0f)));
 
-                var col = _ragePs.colorOverLifetime; col.enabled = true;
+                var col = ragePs.colorOverLifetime; col.enabled = true;
                 var g = new Gradient();
                 g.SetKeys(new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
                           new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(0.8f, 0.5f), new GradientAlphaKey(0f, 1f) });
                 col.color = new ParticleSystem.MinMaxGradient(g);
 
-                var r = _rageGo.GetComponent<ParticleSystemRenderer>();
+                var r = rageGo.GetComponent<ParticleSystemRenderer>();
                 r.sharedMaterial = _rageMat;
                 r.renderMode = ParticleSystemRenderMode.Billboard;
                 r.shadowCastingMode = ShadowCastingMode.Off; r.receiveShadows = false;
-                return new Rage { Go = _rageGo, Ps = _ragePs };
+                return new Rage { Go = rageGo, Ps = ragePs };
             }
             catch (Exception e)
             {

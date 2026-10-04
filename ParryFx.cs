@@ -34,10 +34,13 @@ namespace SbgShields
             Color skin = Skin.Of(p);
 
             // The bubble itself goes hot, and stays drawn long enough to be seen doing it.
+            // Only when there is a flash to see: holding the body for nothing blocked a
+            // re-raise for half a second.
             try
             {
                 ShieldTint.ParryFlash(p);
-                if (Local.Is(p)) Plugin.ExtendLinger(Mathf.Max(0.05f, Plugin.ParryGlowDuration.Value) + 0.05f);
+                if (Local.Is(p) && ShieldTint.Enabled && Plugin.ParryGlow.Value)
+                    Plugin.ExtendLinger(Plugin.ParryFlashSeconds + 0.05f);
             }
             catch (Exception e) { if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Parry flash: " + e.Message); }
 
@@ -47,7 +50,11 @@ namespace SbgShields
                 catch (Exception e) { Plugin.Log.LogWarning("Parry burst failed: " + e.Message); }
             }
 
-            if (Plugin.PerfectParrySound.Value) PlaySound(pos);
+            if (Plugin.PerfectParrySound.Value)
+            {
+                try { PlaySound(pos); }
+                catch (Exception e) { Plugin.Log.LogWarning("Parry sound failed: " + e.Message); }
+            }
 
             if (Plugin.ParryShake.Value)
             {
@@ -197,6 +204,11 @@ namespace SbgShields
         private static bool _loaded, _warnedLoad, _warnedPlay;
         private static string _loadedPath;
 
+        // The config string the cached path was resolved from, so the disk is not
+        // searched again on every parry.
+        private static string _resolvedFor;
+        private static string _resolvedPath;
+
         private static void PlaySound(Vector3 pos)
         {
             if (TryLoad(out var snd))
@@ -229,15 +241,28 @@ namespace SbgShields
         private static bool TryLoad(out FMOD.Sound sound)
         {
             sound = _sound;
-            string name = (Plugin.ParrySoundFile.Value ?? "").Trim();
-            if (name.Length == 0) return false;
-
-            string path = Resolve(name);
-            if (path == null)
+            string raw = Plugin.ParrySoundFile.Value ?? "";
+            try
             {
-                if (!_warnedLoad) { _warnedLoad = true; Plugin.Log.LogInfo($"Parry sound: no '{name}' next to the mod or in its sounds folder; using the game's sting."); }
-                return false;
+                if (raw != _resolvedFor)
+                {
+                    _resolvedFor = raw;
+                    // Explorer's "Copy as path" wraps the path in quotes; BepInEx keeps them,
+                    // and a quote in a path made Path.Combine throw on every parry.
+                    string name = raw.Trim().Trim('"').Trim();
+                    _resolvedPath = name.Length == 0 ? null : Resolve(name);
+                    if (name.Length > 0 && _resolvedPath == null)
+                        Plugin.Log.LogInfo($"Parry sound: no '{name}' next to the mod or in its sounds folder; using the game's sting.");
+                }
             }
+            catch (Exception e)
+            {
+                _resolvedPath = null;
+                Plugin.Log.LogWarning($"Parry sound: '{raw}' is not a usable path ({e.Message}); using the game's sting.");
+            }
+
+            string path = _resolvedPath;
+            if (path == null) return false;
             if (_loaded && path == _loadedPath) return true;
 
             Release();
@@ -262,9 +287,10 @@ namespace SbgShields
             }
         }
 
-        /// <summary>Next to the DLL first, then in its sounds\ subfolder.</summary>
+        /// <summary>An absolute path as given, else next to the DLL, then in its sounds\ subfolder.</summary>
         private static string Resolve(string name)
         {
+            if (Path.IsPathRooted(name)) return File.Exists(name) ? name : null;
             string dir = Plugin.PluginDirectory;
             if (string.IsNullOrEmpty(dir)) return null;
             foreach (var candidate in new[] { Path.Combine(dir, name), Path.Combine(dir, "sounds", name) })
@@ -282,6 +308,7 @@ namespace SbgShields
         internal static void DestroyAll()
         {
             Release();
+            _resolvedFor = null; _resolvedPath = null;
             if (_go != null) UnityEngine.Object.Destroy(_go);
             if (_ringMat != null) UnityEngine.Object.Destroy(_ringMat);
             if (_sparkMat != null) UnityEngine.Object.Destroy(_sparkMat);

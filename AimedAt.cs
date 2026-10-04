@@ -57,6 +57,9 @@ namespace SbgShields
             foreach (var p in remote)
             {
                 if (p == null || ReferenceEquals(p, me)) continue;
+                bool teammate = false;
+                try { teammate = me.IsTeammateOf(p, excludeSelf: true); } catch { }
+                if (teammate) continue;   // a teammate's shot cannot land, so it arms nothing
                 try
                 {
                     if (!p.NetworkedIsAimingItem || p.NetworkedEquippedItem == ItemType.None) continue;

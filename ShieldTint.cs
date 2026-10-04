@@ -36,7 +36,7 @@ namespace SbgShields
 
     /// <summary>
     /// Recolours the vanilla shield VFX (activation, hold, dissolve, hit sparks,
-    /// break) to the owner's skin colour, for OUR Shift shield only.
+    /// break) to the owner's skin colour, for every player's shield (see IsOurs).
     ///
     /// How: every one of those effects is set up by the game with
     /// <c>TeamColorVfxHandler.SetTeam(team)</c> immediately before <c>Play()</c>.
@@ -53,6 +53,7 @@ namespace SbgShields
     internal static class ShieldTint
     {
         private static Color? _armed;
+        private static PlayerInfo _armedFor;
         private static bool   _consumed;
 
         private static readonly List<ParticleSystem> _systems = new List<ParticleSystem>();
@@ -116,9 +117,10 @@ namespace SbgShields
 
         internal static void Arm(PlayerInfo p)
         {
-            _armed = null; _consumed = false;
+            _armed = null; _armedFor = null; _consumed = false;
             if (!Enabled || !IsOurs(p)) return;
-            _armed = BubbleColour(p);
+            _armed = CurrentColour(p);
+            _armedFor = p;
         }
 
         // ---- Bubble state, visible to everyone ----------------------------------
@@ -170,13 +172,8 @@ namespace SbgShields
         internal static Color CurrentColour(PlayerInfo p)
         {
             if (p == null) return Color.white;
-            if (_flashUntil != double.MinValue && ReferenceEquals(_flashOn, p))
-            {
-                var c = Skin.Of(p);
-                float b = Mathf.Max(1f, Plugin.ParryGlowBoost.Value);
-                return new Color(c.r * b, c.g * b, c.b * b, 1f);
-            }
-            if (Local.Is(p) && _warnActive && _warnDim) return Hot(Skin.Of(p));
+            if (IsFlashing(p)) return FlashColour(p);
+            if (Local.Is(p) && _warnActive && _warnBright) return Hot(Skin.Of(p));
             return BubbleColour(p);
         }
 
@@ -194,24 +191,35 @@ namespace SbgShields
             try
             {
                 if (!p.IsElectromagnetShieldActive) { _lastApplied.Remove(p); return; }
-                if (_flashUntil != double.MinValue && ReferenceEquals(_flashOn, p)) return;   // the parry flash owns this bubble's colour right now (ours or a remote's)
-                if (Local.Is(p) && _warnActive) return;                                        // the pip blink owns ours
+                if (IsFlashing(p)) return;                 // the parry flash owns this bubble's colour right now (ours or a remote's)
+                if (Local.Is(p) && _warnActive) return;    // the pip blink owns ours
                 var col = p.ElectromagnetShieldCollider;
                 if (col == null) return;
                 var c = BubbleColour(p);
                 if (_lastApplied.TryGetValue(p, out var prev) && prev == c) return;
                 _lastApplied[p] = c;
-                Apply(col.transform, c, "bubble state");
+                Apply(col.transform, c, "bubble state", p);
             }
             catch { }
         }
 
-        internal static void Disarm() { _armed = null; }
+        internal static void Disarm() { _armed = null; _armedFor = null; }
 
         // ---- Parry flash -------------------------------------------------------
 
-        private static double _flashUntil = double.MinValue;
-        private static PlayerInfo _flashOn;
+        /// <summary>When each player's parry flash ends. Per player: two parries close together each keep their own.</summary>
+        private static readonly Dictionary<PlayerInfo, double> _flashUntil = new Dictionary<PlayerInfo, double>();
+        private static readonly List<PlayerInfo> _flashDone = new List<PlayerInfo>();
+
+        internal static bool IsFlashing(PlayerInfo p) =>
+            p != null && _flashUntil.TryGetValue(p, out double until) && Time.timeAsDouble < until;
+
+        private static Color FlashColour(PlayerInfo p)
+        {
+            var c = Skin.Of(p);
+            float b = Mathf.Max(1f, Plugin.ParryGlowBoost.Value);
+            return new Color(c.r * b, c.g * b, c.b * b, 1f);
+        }
 
         /// <summary>
         /// Blow the shield's colour out bright for a moment. Only visible while the
@@ -226,30 +234,39 @@ namespace SbgShields
             var col = p.ElectromagnetShieldCollider;
             if (col == null) return;
 
-            var c = Skin.Of(p);
-            float b = Mathf.Max(1f, Plugin.ParryGlowBoost.Value);
-            var hot = new Color(c.r * b, c.g * b, c.b * b, 1f);
-
-            _flashOn = p;
-            _flashUntil = Time.timeAsDouble + Mathf.Max(0.05f, Plugin.ParryGlowDuration.Value);
-            Apply(col.transform, hot, "parry flash");
+            _flashUntil[p] = Time.timeAsDouble + Plugin.ParryFlashSeconds;
+            var hot = FlashColour(p);
+            _lastApplied[p] = hot;
+            Apply(col.transform, hot, "parry flash", p);
         }
 
-        /// <summary>Put the normal colour back when the flash is done.</summary>
+        /// <summary>Put each player's normal colour back when their flash is done.</summary>
         private static void TickParryFlash()
         {
-            if (_flashUntil == double.MinValue || Time.timeAsDouble < _flashUntil) return;
-            _flashUntil = double.MinValue;
-
-            var p = _flashOn; _flashOn = null;
-            if (p == null) return;
-            var col = p.ElectromagnetShieldCollider;
-            if (col != null) Apply(col.transform, BubbleColour(p), "parry flash over");
+            if (_flashUntil.Count == 0) return;
+            double now = Time.timeAsDouble;
+            _flashDone.Clear();
+            foreach (var kv in _flashUntil) if (kv.Key == null || now >= kv.Value) _flashDone.Add(kv.Key);
+            foreach (var p in _flashDone)
+            {
+                _flashUntil.Remove(p);
+                if (p == null) continue;
+                try
+                {
+                    if (!p.IsElectromagnetShieldActive) { _lastApplied.Remove(p); continue; }
+                    var col = p.ElectromagnetShieldCollider;
+                    if (col == null) continue;
+                    var c = CurrentColour(p);
+                    _lastApplied[p] = c;
+                    Apply(col.transform, c, "parry flash over", p);
+                }
+                catch { }
+            }
         }
 
         // ---- Pip warning -------------------------------------------------------
 
-        private static bool _warnActive, _warnDim;
+        private static bool _warnActive, _warnBright;
 
         /// <summary>
         /// Last pip: the bubble blinks BRIGHT. The tint pipeline is re-run on each phase
@@ -263,17 +280,23 @@ namespace SbgShields
         {
             var p = GameManager.LocalPlayerInfo;
             // Last circle: two pips or fewer, since a circle is two.
+            bool flashing = IsFlashing(p);
             bool want = Enabled && Plugin.PipWarning.Value && Plugin.WeActivated && ShieldState.Pips > 0 && ShieldState.Pips <= 2 &&
-                        p != null && p.IsElectromagnetShieldActive && _flashUntil == double.MinValue;
+                        p != null && p.IsElectromagnetShieldActive && !flashing;
 
             if (!want)
             {
                 if (_warnActive)
                 {
                     _warnActive = false;
-                    if (_warnDim && p != null && p.ElectromagnetShieldCollider != null)
-                        Apply(p.ElectromagnetShieldCollider.transform, BubbleColour(p), "pip warning over");
-                    _warnDim = false;
+                    // Back to the plain state colour -- unless the parry flash took over, which owns it now.
+                    if (_warnBright && !flashing && p != null && p.ElectromagnetShieldCollider != null)
+                    {
+                        var c = BubbleColour(p);
+                        _lastApplied[p] = c;
+                        Apply(p.ElectromagnetShieldCollider.transform, c, "pip warning over", p);
+                    }
+                    _warnBright = false;
                 }
                 return;
             }
@@ -281,11 +304,13 @@ namespace SbgShields
             var col = p.ElectromagnetShieldCollider;
             if (col == null) return;
             bool bright = (Time.timeAsDouble * 5.0) % 1.0 < 0.5;   // 5 Hz
-            if (_warnActive && bright == _warnDim) return;
+            if (_warnActive && bright == _warnBright) return;
             if (!_warnActive) Plugin.Log.LogInfo($"Last circle ({ShieldState.Pips} pips): bubble blinking.");
-            _warnActive = true; _warnDim = bright;
+            _warnActive = true; _warnBright = bright;
             // Blink between the worn, pale state colour and a hot saturated pop of the skin.
-            Apply(col.transform, bright ? Hot(Skin.Of(p)) : BubbleColour(p), "pip warning");
+            var blink = bright ? Hot(Skin.Of(p)) : BubbleColour(p);
+            _lastApplied[p] = blink;
+            Apply(col.transform, blink, "pip warning", p);
         }
 
         /// <summary>
@@ -297,20 +322,22 @@ namespace SbgShields
         {
             if (!_armed.HasValue || h == null) return;
             _consumed = true;
-            Apply(h.transform, _armed.Value, "SetTeam");
+            Apply(h.transform, _armed.Value, "SetTeam", _armedFor);
         }
 
         /// <summary>Called from the shield hook postfix: fallback if no SetTeam consumed the arm.</summary>
         internal static void OnShieldHookDone(PlayerInfo p)
         {
             if (_armed.HasValue && !_consumed && p.ElectromagnetShieldCollider != null)
-                Apply(p.ElectromagnetShieldCollider.transform, _armed.Value, "hook fallback");
-            _armed = null; _consumed = false;
+                Apply(p.ElectromagnetShieldCollider.transform, _armed.Value, "hook fallback", p);
+            if (_armed.HasValue && p != null && p.IsElectromagnetShieldActive) _lastApplied[p] = _armed.Value;
+            _armed = null; _armedFor = null; _consumed = false;
         }
 
         // ---- Tint --------------------------------------------------------------
 
-        internal static void Apply(Transform root, Color c, string why)
+        /// <param name="owner">Whose bubble this is. Pooled effects move between players, so it is bound on every apply.</param>
+        internal static void Apply(Transform root, Color c, string why, PlayerInfo owner)
         {
             try
             {
@@ -320,7 +347,7 @@ namespace SbgShields
 
                 _handlers.Clear();
                 root.GetComponentsInChildren(true, _handlers);
-                foreach (var h in _handlers) BubbleMaterialTintPatch.Register(h, c);
+                foreach (var h in _handlers) BubbleMaterialTintPatch.Register(h, c, owner);
 
                 _renderers.Clear();
                 root.GetComponentsInChildren(true, _renderers);
@@ -353,23 +380,61 @@ namespace SbgShields
             }
         }
 
+        /// <summary>A particle system's colours as the game authored them, taken the first time we see it.</summary>
+        private class Authored
+        {
+            public ParticleSystem.MinMaxGradient Start, Life, Speed, TrailLife, TrailTrail;
+        }
+        private static readonly Dictionary<ParticleSystem, Authored> _authored = new Dictionary<ParticleSystem, Authored>();
+        private static readonly List<ParticleSystem> _authoredSweep = new List<ParticleSystem>();
+
+        /// <summary>
+        /// Always tint FROM the authored colours, never from the live ones: those are our
+        /// own previous tint. Re-tinting the live values multiplied brightness and alpha
+        /// into themselves on every apply (every raise applied twice, and the pip blink
+        /// and the parry flash many times), so a held bubble drifted darker or brighter
+        /// over a few seconds. The same bug as the material glow in 0.7.25.
+        /// </summary>
         private static void TintSystem(ParticleSystem ps, Color c)
         {
+            if (!_authored.TryGetValue(ps, out var a))
+            {
+                var tr0 = ps.trails;
+                a = new Authored
+                {
+                    Start = ps.main.startColor,
+                    Life = ps.colorOverLifetime.color,
+                    Speed = ps.colorBySpeed.color,
+                    TrailLife = tr0.colorOverLifetime,
+                    TrailTrail = tr0.colorOverTrail,
+                };
+                _authored[ps] = a;
+            }
+
             var main = ps.main;
-            main.startColor = Retint(main.startColor, c);
+            main.startColor = Retint(a.Start, c);
 
             var col = ps.colorOverLifetime;
-            if (col.enabled) col.color = Retint(col.color, c);
+            if (col.enabled) col.color = Retint(a.Life, c);
 
             var cbs = ps.colorBySpeed;
-            if (cbs.enabled) cbs.color = Retint(cbs.color, c);
+            if (cbs.enabled) cbs.color = Retint(a.Speed, c);
 
             var tr = ps.trails;
             if (tr.enabled)
             {
-                tr.colorOverLifetime = Retint(tr.colorOverLifetime, c);
-                tr.colorOverTrail    = Retint(tr.colorOverTrail, c);
+                tr.colorOverLifetime = Retint(a.TrailLife, c);
+                tr.colorOverTrail    = Retint(a.TrailTrail, c);
             }
+        }
+
+        /// <summary>Put a system's authored colours back (unload).</summary>
+        private static void RestoreSystem(ParticleSystem ps, Authored a)
+        {
+            var main = ps.main; main.startColor = a.Start;
+            var col = ps.colorOverLifetime; col.color = a.Life;
+            var cbs = ps.colorBySpeed; cbs.color = a.Speed;
+            var tr = ps.trails; tr.colorOverLifetime = a.TrailLife; tr.colorOverTrail = a.TrailTrail;
         }
 
         /// <summary>
@@ -464,7 +529,22 @@ namespace SbgShields
             }
             if (_sweep.Count > 0 && Plugin.VerboseLogging.Value)
                 Plugin.Log.LogInfo($"Shield tint: released {_sweep.Count} material instance(s) for destroyed renderers.");
+            _authoredSweep.Clear();
+            foreach (var kv in _authored) if (kv.Key == null) _authoredSweep.Add(kv.Key);
+            foreach (var ps in _authoredSweep) _authored.Remove(ps);
             BubbleMaterialTintPatch.Sweep();
+            PrunePlayers();
+        }
+
+        private static readonly List<PlayerInfo> _gonePlayers = new List<PlayerInfo>();
+
+        /// <summary>Players who left (Unity-destroyed) are dropped from the per-player caches.</summary>
+        private static void PrunePlayers()
+        {
+            _gonePlayers.Clear();
+            foreach (var k in _lastFraction.Keys) if (k == null) _gonePlayers.Add(k);
+            foreach (var k in _lastApplied.Keys) if (k == null && !_gonePlayers.Contains(k)) _gonePlayers.Add(k);
+            foreach (var k in _gonePlayers) { _lastFraction.Remove(k); _crackUntil.Remove(k); _lastApplied.Remove(k); _flashUntil.Remove(k); }
         }
 
         /// <summary>Full teardown on plugin unload: give everything back and destroy what we made.</summary>
@@ -478,10 +558,12 @@ namespace SbgShields
                 if (inst.Instance != null) UnityEngine.Object.Destroy(inst.Instance);
             }
             _instances.Clear();
+            foreach (var kv in _authored) if (kv.Key != null) { try { RestoreSystem(kv.Key, kv.Value); } catch { } }
+            _authored.Clear();
             _dumped.Clear();
             _restored = true;
-            _armed = null;
-            _lastFraction.Clear(); _crackUntil.Clear(); _lastApplied.Clear();
+            _armed = null; _armedFor = null;
+            _lastFraction.Clear(); _crackUntil.Clear(); _lastApplied.Clear(); _flashUntil.Clear();
             BubbleMaterialTintPatch.DestroyAll();
             BubbleHalo.DestroyAll();
         }
@@ -547,8 +629,9 @@ namespace SbgShields
     /// <summary>
     /// Replaces BubbleVfxMaterialHandler.Update for shields we have tinted: same
     /// above/below-water swap, but between tinted copies of its two materials.
-    /// Registration expires shortly after our shield drops, so the pooled prefab
-    /// goes back to vanilla for the next user.
+    /// Registration expires shortly after its owner's shield drops, so the pooled
+    /// prefab goes back to vanilla. The bubble effect is pooled and handed from player
+    /// to player, so the owner is rebound on every tint, never kept from first sight.
     /// </summary>
     [HarmonyPatch(typeof(BubbleVfxMaterialHandler), "Update")]
     internal static class BubbleMaterialTintPatch
@@ -583,7 +666,7 @@ namespace SbgShields
             }
         }
 
-        internal static void Register(BubbleVfxMaterialHandler h, Color c)
+        internal static void Register(BubbleVfxMaterialHandler h, Color c, PlayerInfo owner)
         {
             if (h == null || _normal == null) return;
             if (!_reg.TryGetValue(h, out var t))
@@ -591,7 +674,7 @@ namespace SbgShields
                 t = new Tinted();
                 _reg[h] = t;
             }
-            if (t.Owner == null) t.Owner = ShieldTint.OwnerOf(h.transform);
+            t.Owner = owner != null ? owner : ShieldTint.OwnerOf(h.transform);
             t.LastActive = Time.timeAsDouble;
             var n = _normal(h); var st = _stencil(h);
             if (t.Normal == null  && n  != null) t.Normal  = new Material(n);
@@ -632,9 +715,12 @@ namespace SbgShields
         }
 
         /// <summary>Keep the tint while the owner's shield is up, and for a moment after so the dissolve stays coloured.</summary>
-        private static bool StillOurs(Tinted t)
+        private static bool StillOurs(BubbleVfxMaterialHandler h, Tinted t)
         {
-            if (t.Owner == null) return false;
+            // The owner can be unknown for a frame when the game tints before parenting
+            // the effect; resolve it from where the effect hangs now.
+            if (t.Owner == null) t.Owner = ShieldTint.OwnerOf(h.transform);
+            if (t.Owner == null) return Time.timeAsDouble - t.LastActive < 0.5;
             bool active = false;
             try { active = t.Owner.IsElectromagnetShieldActive; } catch { }
             if (active) t.LastActive = Time.timeAsDouble;
@@ -675,7 +761,7 @@ namespace SbgShields
             try
             {
                 if (!_reg.TryGetValue(__instance, out var t)) return true;
-                if (!StillOurs(t)) { Release(__instance, t); return true; }
+                if (!ShieldTint.Enabled || !StillOurs(__instance, t)) { Release(__instance, t); return true; }
                 var r = _renderer(__instance);
                 if (r == null) return false;
                 Swap(r, t);

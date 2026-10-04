@@ -12,3 +12,6 @@ decomp/
 
 # Working agreements for Claude Code: local only, shipped in the -priv zip, not on the public repo.
 CLAUDE.md
+
+# Code review reports: local, shipped in the -priv zip only.
+SBG-Shields-Review-*.md

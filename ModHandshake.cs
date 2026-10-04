@@ -6,8 +6,10 @@ using UnityEngine;
 namespace SbgShields
 {
     /// <summary>
-    /// Makes sure everybody in the lobby is running the same version of this mod, and
-    /// puts the mod to sleep if they are not.
+    /// Makes sure everybody in the lobby is running the same version of this mod. It is
+    /// an "every player needs it" mod: a modded HOST removes anyone who joins without it
+    /// or on another version (with a chat line saying why), and a modded client in a
+    /// lobby it cannot vouch for puts the mod to sleep.
     ///
     /// WHY CHAT: the obvious implementation is a custom Mirror message, but Mirror
     /// disconnects a peer that receives a message id it has no handler for. A modded
@@ -17,11 +19,10 @@ namespace SbgShields
     /// player simply sees one line of text saying who is modded, which is exactly the
     /// information they need anyway. Modded clients swallow the line before it renders.
     ///
-    /// WHAT THIS IS NOT: this is not anti-cheat. Everything here runs on the client,
-    /// so anyone willing to edit the DLL can strip it out. Real enforcement would have
-    /// to live on the server, and the server is the stock game. What this does prevent
-    /// is the accidental case -- someone joins on an old version, or without the mod,
-    /// and the match silently plays by two different rule sets.
+    /// WHAT THIS IS NOT: this is not anti-cheat. Everything here runs on the players'
+    /// own machines, so anyone willing to edit the DLL can strip it out. What it does
+    /// prevent is the accidental case -- someone joins on an old version, or without the
+    /// mod, and the match silently plays by two different rule sets.
     /// </summary>
     internal static class ModHandshake
     {
@@ -36,6 +37,8 @@ namespace SbgShields
             public bool   Nudged;          // we re-announced once because they stayed silent
             public bool   RepeatReplied;   // we answered one repeat announce from them since our last reset
             public bool   HelloSinceReset; // they have announced since OUR last reset: they are loaded and ready
+            public bool   Kicked;          // host only: we removed them; do not do it twice
+            public double ProblemSince = double.MinValue;   // client only: when this peer first looked unmodded or mismatched
         }
 
         private static readonly Dictionary<ulong, Peer> _peers = new Dictionary<ulong, Peer>();
@@ -56,7 +59,8 @@ namespace SbgShields
         private static double _resetAt = double.MinValue;
         private static bool   _warnedNotReady;
 
-        // WHY WE KEEP TALKING. Every scene change resets everyone, and while a client is
+        // WHY WE KEEP TALKING. Every scene change resets everyone (Plugin's scene hook calls
+        // Reset), and while a client is
         // loading a course Mirror marks it "not ready" and silently drops traffic both
         // ways: RPCs the host sends to it (our announce never arrives) and commands it
         // sends (its own announce never leaves, though the call "succeeds"). A fixed
@@ -103,6 +107,13 @@ namespace SbgShields
                 catch { return false; }
             }
         }
+        /// <summary>This player announced exactly our version. The host relays SbgNet messages only to these.</summary>
+        internal static bool IsConfirmed(PlayerInfo p)
+        {
+            ulong g = GuidOf(p);
+            return g != 0UL && _peers.TryGetValue(g, out var peer) && peer.Announced && peer.Version == Plugin.Version;
+        }
+
         internal static string BlockReason => _blockReason;
 
         /// <summary>When the gate last closed, so the HUD knows how long to shout.</summary>
@@ -133,13 +144,11 @@ namespace SbgShields
         // ---- Sending -----------------------------------------------------------
 
         /// <summary>
-        /// Sent ONCE when we join, and once more only when a player we have not met
-        /// announces themselves (so they learn about us in return). Never on a timer:
-        /// in a lobby where everyone has the mod these lines are swallowed and nobody
-        /// ever sees one, and in a lobby with a vanilla player they see a single line
-        /// per modded player rather than a repeating drip.
-        /// </summary>
-        /// <summary>
+        /// Sent after every reset (join, scene load) and repeated at the rate limit until
+        /// every player present has said hello back; also once in reply to a newcomer or
+        /// to a known player announcing again. Modded players swallow these lines, so in a
+        /// fully modded lobby nobody ever sees one.
+        ///
         /// Returns true only if the message actually went out. A failed send (no chat
         /// manager yet, e.g. sitting in the main menu) must NOT count as done, or the
         /// announcement is silently lost and nobody in the lobby ever hears from us.
@@ -374,26 +383,23 @@ namespace SbgShields
                 return;
             }
 
+            bool weAreHost = false;
+            try { weAreHost = Mirror.NetworkServer.active; } catch { }
+            bool hostVouches = !weAreHost && HostIsConfirmed();
+
             foreach (var p in _scratch)
             {
                 ulong guid = GuidOf(p);
                 if (guid == 0UL || !_peers.TryGetValue(guid, out var peer)) continue;
 
+                string bad = null;
                 if (peer.Announced)
                 {
                     if (peer.Version != Plugin.Version)
-                    {
-                        problem = $"{NameOf(p)} is on SBG Shields {peer.Version}, you are on {Plugin.Version}";
-                        if (!peer.Warned) { peer.Warned = true; Plugin.Log.LogWarning("Version mismatch: " + problem); }
-                        break;
-                    }
+                        bad = $"{NameOf(p)} is on SBG Shields {peer.Version}, this lobby runs {Plugin.Version}";
                 }
                 else if (now - peer.FirstSeen > timeout)
-                {
-                    problem = $"{NameOf(p)} does not have SBG Shields installed";
-                    if (!peer.Warned) { peer.Warned = true; Plugin.Log.LogWarning(problem + "; the mod is standing down."); }
-                    break;
-                }
+                    bad = $"{NameOf(p)} does not have SBG Shields installed";
                 else if (!peer.Nudged && now - peer.FirstSeen > timeout * 0.5f)
                 {
                     // Halfway to giving up on them and still nothing. Our first announce
@@ -404,9 +410,92 @@ namespace SbgShields
                     _nextAnnounceDue = now;
                     Plugin.Log.LogInfo($"No announce from {NameOf(p)} after {now - peer.FirstSeen:0}s; announcing once more.");
                 }
+
+                if (bad == null) { peer.ProblemSince = double.MinValue; continue; }
+
+                // The host removes them: nobody plays a modded lobby without the mod.
+                if (weAreHost)
+                {
+                    // Silence gets extra time before it costs someone their seat: a modded
+                    // friend on a slow load cannot announce until their client is ready.
+                    // A wrong version is certain the moment it is announced.
+                    if (!peer.Announced && now - peer.FirstSeen <= timeout + KickExtraWait) continue;
+                    if (!peer.Kicked) { peer.Kicked = true; Kick(p, bad); }
+                    continue;   // being removed; not a reason for the host to stand down
+                }
+
+                // A client whose host has the mod waits a few seconds for the host to
+                // remove them, rather than flipping the whole lobby to vanilla and back.
+                if (peer.ProblemSince == double.MinValue) peer.ProblemSince = now;
+                if (hostVouches && !IsHost(p) && now - peer.ProblemSince < KickGrace) continue;
+
+                problem = bad;
+                if (!peer.Warned) { peer.Warned = true; Plugin.Log.LogWarning(problem + "; the mod is standing down."); }
+                break;
             }
 
             SetGate(problem == null, problem);
+        }
+
+        /// <summary>Seconds past HandshakeTimeout the host waits on a silent player before removing them.</summary>
+        private const double KickExtraWait = 8.0;
+
+        /// <summary>
+        /// Seconds a client waits for the host to remove a bad peer before standing down
+        /// itself. Covers the host's extra wait plus a margin.
+        /// </summary>
+        private const double KickGrace = KickExtraWait + 4.0;
+
+        private static bool IsHost(PlayerInfo p)
+        {
+            try { return CourseManager.TryGetPlayerState(p, out var s) && s.isHost; } catch { return false; }
+        }
+
+        /// <summary>The lobby's host has announced exactly our version, so it will enforce the rule for everyone.</summary>
+        private static bool HostIsConfirmed()
+        {
+            try
+            {
+                var r = GameManager.RemotePlayers;
+                if (r == null) return false;
+                foreach (var p in r) if (IsHost(p)) return IsConfirmed(p);
+            }
+            catch { }
+            return false;
+        }
+
+        private static System.Reflection.MethodInfo _disconnectWithMessage;
+        private static bool _disconnectLooked;
+
+        /// <summary>
+        /// Host only. Says why in chat (everyone sees it, the player being removed
+        /// included), then disconnects them with the game's own "kicked from lobby"
+        /// message. Not the game's ServerKickConnection: that also bans them for the
+        /// session, and a friend who installs the mod should be able to come straight back.
+        /// </summary>
+        private static void Kick(PlayerInfo p, string why)
+        {
+            string name = NameOf(p);
+            Plugin.Log.LogWarning($"Removing {name} from the lobby: {why}.");
+            try { ChatBypass.Send($"{name} was removed: this lobby runs Super Battle Bros {Plugin.Version} and every player needs the same version (install it with r2modman)."); }
+            catch { }
+            try
+            {
+                var conn = p.connectionToClient;
+                if (conn == null) return;
+                if (!_disconnectLooked)
+                {
+                    _disconnectLooked = true;
+                    _disconnectWithMessage = AccessTools.Method(typeof(BNetworkManager), "ServerDisconnectClientWithMessage");
+                    if (_disconnectWithMessage == null) Plugin.Log.LogWarning("The game's disconnect-with-message is gone; removing players without a reason shown.");
+                }
+                var manager = Mirror.NetworkManager.singleton as BNetworkManager;
+                if (_disconnectWithMessage != null && manager != null)
+                    _disconnectWithMessage.Invoke(manager, new object[] { conn, DisconnectReason.KickedFromLobby });
+                else
+                    conn.Disconnect();
+            }
+            catch (Exception e) { Plugin.Log.LogWarning($"Could not remove {name}: {(e.InnerException ?? e).Message}"); }
         }
 
         private static void SetGate(bool open, string problem)
@@ -418,7 +507,7 @@ namespace SbgShields
                 Plugin.Log.LogWarning(open
                     ? "SBG Shields is active."
                     : $"SBG Shields is inactive: {problem}. Vanilla rules apply.");
-                if (!open) Plugin.ForceReleaseForHandshake();
+                if (!open) Plugin.OnStandDown(problem);
             }
             _evaluatedOnce = true;
             _blockReason = problem;
