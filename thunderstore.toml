@@ -33,4 +33,4 @@ repository = "https://thunderstore.io"
 communities = [ "super-battle-golf" ]
 
 [publish.categories]
-super-battle-golf = [ "mods", "allclients" ]
+super-battle-golf = [ "mods", "allclients", "clientside" ]
