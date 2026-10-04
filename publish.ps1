@@ -36,6 +36,6 @@ if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) { throw "package.ps1 faile
 $zip = "dist\SuperBattleBros-$ver.zip"
 if (-not (Test-Path $zip)) { throw "Public zip not found: $zip" }
 
-tcli publish --config-path thunderstore.toml --file $zip --package-version $ver --token $token
+tcli publish --config-path thunderstore.toml --file $zip --token $token   # the version comes from the manifest inside the zip
 if ($LASTEXITCODE -ne 0) { throw "tcli publish failed (exit $LASTEXITCODE)" }
 Write-Host "Published SuperBattleBros $ver. r2modman may take a few minutes to see it."
