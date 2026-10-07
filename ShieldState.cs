@@ -91,6 +91,9 @@ namespace SbgShields
         /// <summary>Set by the swing-projectile handler right before TryKnockOut so we can tell targeted from untargeted balls.</summary>
         internal static bool PendingProjectileWasTargeted;
 
+        /// <summary>The ball behind that hit (its netId), so a parry can ask the host to send it back.</summary>
+        internal static uint PendingProjectileBall;
+
         /// <summary>Percent to add if the knockout actually goes through (checked in the postfix).</summary>
         internal static float PendingPercentGain;
 
@@ -313,6 +316,7 @@ namespace SbgShields
             PendingHitstunMultiplier = -1f;
             PendingPercentGain = 0f;
             PendingProjectileWasTargeted = false;
+            PendingProjectileBall = 0u;
             LaunchDragUntil = double.MinValue;
             LaunchHangUntil = double.MinValue;
         }
@@ -331,20 +335,6 @@ namespace SbgShields
                 double until = Math.Max(UseCooldownUntil, BreakCooldownUntil);
                 if (Pips <= 0 && !Plugin.RestoreAfterBreakCooldown.Value) return float.PositiveInfinity;
                 return (float)Math.Max(0.0, until - now);
-            }
-        }
-
-        /// <summary>0 at the start of whichever cooldown is binding, 1 when the bubble is ready. Drives the HUD ring.</summary>
-        internal static float CooldownProgress
-        {
-            get
-            {
-                double now = Time.timeAsDouble;
-                bool breakBinding = BreakCooldownUntil >= UseCooldownUntil;
-                double until = breakBinding ? BreakCooldownUntil : UseCooldownUntil;
-                float total = breakBinding ? Plugin.BreakCooldown.Value : Plugin.UseCooldown.Value;
-                if (until <= now || total <= 0.01f) return 1f;
-                return Mathf.Clamp01(1f - (float)((until - now) / total));
             }
         }
 
@@ -567,6 +557,39 @@ namespace SbgShields
             _parryArmedUntil = double.MinValue;
             _parryProjectile = _parrySwing = false;
             _parryThreat = "";
+            _swingThreat = null;
+        }
+
+        /// <summary>The golfer whose wind-up armed a swing parry. The arm stays live while they are still winding up.</summary>
+        private static PlayerInfo _swingThreat;
+
+        /// <summary>How long a wind-up can keep a swing parry armed. A charge held longer than this is a bluff.</summary>
+        private const double SwingReadMax = 2.5;
+
+        private static readonly int _chargingHash = Animator.StringToHash("Is charging swing");
+        private static readonly int _swingingHash = Animator.StringToHash("Is swinging");
+
+        /// <summary>
+        /// "wind-up", "swing" or null. A player's swing state (IsChargingSwing, IsSwinging)
+        /// is set only on their own machine; everyone else sees it only through the animator,
+        /// whose parameters the game syncs. Reading the properties for another player always
+        /// said "not swinging", which is why a club could never be parried.
+        /// </summary>
+        internal static string SwingStateOf(PlayerInfo p)
+        {
+            if (p == null) return null;
+            try
+            {
+                var g = p.AsGolfer;
+                if (Local.Is(p) && g != null)
+                    return g.IsSwinging ? "swing" : g.IsChargingSwing ? "wind-up" : null;
+                var anim = HitStop.AnimatorOf(p);
+                if (anim == null) return null;
+                if (anim.GetBool(_swingingHash)) return "swing";
+                if (anim.GetBool(_chargingHash)) return "wind-up";
+            }
+            catch { }
+            return null;
         }
 
         /// <summary>Called from Plugin.ReleaseShield on a deliberate release, while the shield collider still exists.</summary>
@@ -617,10 +640,11 @@ namespace SbgShields
                         try { teammate = player.IsTeammateOf(other, excludeSelf: true); } catch { }
                         if (teammate) { Reject($"{name} teammate"); continue; }   // the game never lets a teammate's swing land
                         if (dist > Plugin.ParryReach.Value + 1f) { Reject($"{name} {dist:0.0}m away"); continue; }   // a club has to be able to reach
-                        var g = other.AsGolfer;
-                        if (g == null || !(g.IsChargingSwing || g.IsSwinging)) { Reject($"{name} not swinging"); continue; }
+                        var swingState = SwingStateOf(other);
+                        if (swingState == null) { Reject($"{name} not swinging"); continue; }
                         _parrySwing = true;
-                        _threatText.Append(_threatText.Length > 0 ? ", " : "").Append(g.IsSwinging ? "swing" : "wind-up").Append(" from ").Append(name).Append($" {dist:0.0}m");
+                        _swingThreat = other;
+                        _threatText.Append(_threatText.Length > 0 ? ", " : "").Append(swingState).Append(" from ").Append(name).Append($" {dist:0.0}m");
                         continue;
                     }
 
@@ -710,7 +734,12 @@ namespace SbgShields
         internal static bool IsPerfectParry(int cost, bool swingClass)
         {
             if (!Plugin.PerfectParry.Value) return false;
-            if (Time.timeAsDouble > _parryArmedUntil) return false;
+            // A club read stays live for as long as that golfer keeps winding up (up to
+            // SwingReadMax after the release): a charged swing can easily outlast the
+            // ordinary arm window, and the read was right all along.
+            bool swingStillComing = swingClass && _parrySwing && _swingThreat != null
+                                    && Time.timeAsDouble - LoweredAt < SwingReadMax && SwingStateOf(_swingThreat) != null;
+            if (Time.timeAsDouble > _parryArmedUntil && !swingStillComing) return false;
             if (swingClass ? !_parrySwing : !_parryProjectile) return false;
             if (cost == CostUnblockable) return Plugin.PerfectParryBeatsUnblockable.Value;
             if (cost == CostFullBreak)   return Plugin.PerfectParryBeatsFullBreak.Value;
@@ -736,7 +765,8 @@ namespace SbgShields
 
         /// <param name="attacker">Who threw the parried hit, when known. They are stunned, unless their homing item is coming back at them.</param>
         /// <param name="sentBack">The parried item is a homing item the bubble just reflected to its owner.</param>
-        private static void Parry(PlayerInfo player, string what, int cost, bool swingClass, PlayerInfo attacker, bool sentBack)
+        /// <param name="ball">A ball that already hit us, for the host to relaunch at the attacker (0 = none).</param>
+        private static void Parry(PlayerInfo player, string what, int cost, bool swingClass, PlayerInfo attacker, bool sentBack, uint ball = 0u)
         {
             Stats.Parries++;
             LastParryAt = Time.timeAsDouble;
@@ -758,13 +788,44 @@ namespace SbgShields
             catch { }
             try { ParryFx.Play(player); }   // flash, burst, sound, shake -- the same thing everyone else sees over SbgNet
             catch (Exception e) { Plugin.Log.LogWarning("Parry effects failed: " + e.Message); }
+            try { GrantParrySpeedBoost(player); }
+            catch (Exception e) { Plugin.Log.LogWarning("Parry speed boost failed: " + e.Message); }
             try { SbgNet.Send(SbgNet.Kind.Parry, Plugin.ParryFreezeSeconds); }   // everyone else: the flash, and the freeze of our pose
             catch (Exception e) { Plugin.Log.LogWarning("Parry message failed: " + e.Message); }
+            if (ball != 0u)
+            {
+                try { if (!SbgNet.SendBall(attacker, ball)) Plugin.Log.LogInfo("Send-back request could not be sent."); }
+                catch (Exception e) { Plugin.Log.LogWarning("Send-back message failed: " + e.Message); }
+            }
             if (stun)
             {
                 try { SbgNet.SendTo(SbgNet.Kind.ParryStun, attacker); }   // the attacker's game knocks them down
                 catch (Exception e) { Plugin.Log.LogWarning("Parry stun message failed: " + e.Message); }
             }
+        }
+
+        private static readonly Action<PlayerMovement, float> _addSpeedBoost = BindAddSpeedBoost();
+
+        private static Action<PlayerMovement, float> BindAddSpeedBoost()
+        {
+            try
+            {
+                var m = AccessTools.Method(typeof(PlayerMovement), "AddSpeedBoost", new[] { typeof(float) });
+                return m != null ? AccessTools.MethodDelegate<Action<PlayerMovement, float>>(m) : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// The coffee-style boost a knockout gives the player who landed it, for a parry.
+        /// The game's own AddSpeedBoost, so it stacks and caps exactly like that one, and
+        /// only when the match has the knockout speed boost rule on.
+        /// </summary>
+        private static void GrantParrySpeedBoost(PlayerInfo player)
+        {
+            if (!Plugin.ParrySpeedBoost.Value || _addSpeedBoost == null || player == null || player.Movement == null) return;
+            if (!MatchSetupRules.GetValueAsBool(MatchSetupRules.Rule.KnockoutSpeedBoost)) return;
+            _addSpeedBoost(player.Movement, GameManager.PlayerMovementSettings.KnockOutSpeedBoostDuration);
         }
 
         private static string NameOf(PlayerInfo p)
@@ -895,7 +956,9 @@ namespace SbgShields
             }
 
             bool targeted = PendingProjectileWasTargeted;
+            uint ball = PendingProjectileBall;
             PendingProjectileWasTargeted = false;
+            PendingProjectileBall = 0u;
 
             int  cost      = GetCost(type, targeted);
             bool swing     = IsSwingClass(type);
@@ -952,7 +1015,11 @@ namespace SbgShields
             // knocked out: an arm left over from before your own knockout is not a read.
             else if (!alreadyDown && IsPerfectParry(cost, swing))
             {
-                Parry(player, type.ToString(), cost, swing, responsiblePlayer, sentBack: false);
+                // A homing ball that reached us before the reflect window did (a client's read
+                // gets to the host a ping late): the host sends it back now instead.
+                bool sendBack = targeted && ball != 0u && SendBack.IsBall(type) && Plugin.ParryReflectsHoming.Value
+                                && responsiblePlayer != null && !ReferenceEquals(responsiblePlayer, player);
+                Parry(player, type.ToString(), cost, swing, responsiblePlayer, sentBack: sendBack, ball: sendBack ? ball : 0u);
                 AddCorrection(-incomingVelocityChange);
                 return false;
             }

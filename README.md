@@ -18,11 +18,11 @@ Hold **Left Shift** to raise a bubble. It absorbs hits, costs pips, and breaks i
 
 **Nothing bounces off a held bubble.** Balls, rockets and bombs pass in and cost pips; gun shots land the same way. The bubble is not a body either: a mine, a blast, a laser or a lightning strike measures its distance to you, not to the bubble's edge. Rooted while it's up by default — no moving, jumping, swinging or items.
 
-**Break.** A hit that breaks the bubble is cancelled; you pop straight up, tumble, land, and get up. Everyone nearby hears it, and the bubble is gone for 15 seconds. That cooldown is the real cost. Letting go of a healthy bubble costs 3 seconds before the next one, unless you parried.
+**Break.** A hit that breaks the bubble is cancelled; you pop straight up, tumble, land, and get up. Everyone nearby hears it, and the bubble is gone for 15 seconds. That cooldown is the real cost. Letting go of a healthy bubble costs 1.5 seconds before the next one, unless you parried. A flash camera that blinds you drops it. The magnet item's shield is the game's own and keeps the game's look, so you can always tell which is which.
 
 **Parry.** Let go of the bubble with a threat coming — anything that would reach you within about a third of a second, or a golfer winding up next to you — and the next hit from it is parried: no pips, no percent, no knockback, and it stops a swing that would normally break the bubble. Letting go with nothing coming arms nothing, so it cannot be fished for. Someone aiming a gun along a line through your bubble counts too (experimental).
 
-A parry plays as one committed moment, the same on every screen: an impact frame where you freeze and nothing can touch you, then the bubble stays up, lit, while you hold still, then it snaps off and you are free. A homing ball or rocket that was locked on to you goes back to whoever fired it. Anything else is simply absorbed, and the attacker is knocked down for a moment. The bubble flares, a ring of your colour bursts out of it, and nearby cameras kick.
+A parry plays as one committed moment, the same on every screen: an impact frame where you freeze and nothing can touch you, then the bubble stays up, lit, while you hold still, then it snaps off and you are free. A homing ball or rocket that was locked on to you goes back to whoever fired it. Anything else is simply absorbed, and the attacker is knocked down for a moment. A parry also gives you the same speed boost as knocking someone out. The bubble flares, a ring of your colour bursts out of it, and nearby cameras kick.
 
 ## The percent layer
 

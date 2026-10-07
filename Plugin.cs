@@ -19,7 +19,7 @@ namespace SbgShields
 #else
         public const string Name    = "SBG Shields";
 #endif
-        public const string Version = "0.7.39";
+        public const string Version = "0.7.40";
 
         internal static ManualLogSource Log;
 
@@ -70,6 +70,8 @@ namespace SbgShields
         internal static ConfigEntry<bool>  ParryReflectsHoming;
         internal static ConfigEntry<bool>  ParryStunsAttacker;
         internal static ConfigEntry<float> ParryAttackerStun;
+        internal static ConfigEntry<bool>  ParrySpeedBoost;
+        internal static ConfigEntry<bool>  FlashDropsBubble;
         internal static ConfigEntry<float> ParryGlowBoost;
         internal static ConfigEntry<bool>  ParryBurst;
         internal static ConfigEntry<float> ParryBurstSize;
@@ -220,7 +222,6 @@ namespace SbgShields
         internal static ConfigEntry<bool>   BubbleHudOnLeft;
         internal static ConfigEntry<float>  HudGlow;
         internal static ConfigEntry<bool>   ShowPipDots;
-        internal static ConfigEntry<bool>   CooldownRing;
         internal static ConfigEntry<string> ConfigVersion;
         internal static ConfigEntry<string> PercentFontName;
         internal static ConfigEntry<int>    PercentFontSize;
@@ -371,7 +372,7 @@ namespace SbgShields
         /// </summary>
         private static void OnActiveSceneChanged(Scene from, Scene to)
         {
-            try { ModHandshake.Reset("scene " + to.name); }
+            try { ModHandshake.Reset("scene " + to.name); SendBack.Reset(); }
             catch (Exception e) { Log.LogWarning("Scene change handling failed: " + e.Message); }
         }
 
@@ -391,7 +392,7 @@ namespace SbgShields
                 "Bubble HP. Drawn as five circles of two pips each, so a 1-pip hit takes half a circle. Stray ball 1, guns 2, " +
                 "homing ball 2, explosions and carts 3, swings break it outright, the penalty stroke goes straight through. " +
                 "No regeneration.");
-            UseCooldown = Config.Bind("Shield", "UseCooldown", 3.0f,
+            UseCooldown = Config.Bind("Shield", "UseCooldown", 1.5f,
                 "Seconds after releasing the shield before it can be raised again. Every raise is a commitment; a parry refunds it.");
             InputBuffer = Config.Bind("Shield", "InputBuffer", 0.15f,
                 "Seconds a Shift press is remembered when the bubble cannot come up yet (a cooldown ending, a swing finishing, " +
@@ -507,6 +508,11 @@ namespace SbgShields
                 "the punish). Decided on the parrier's machine and applied by the attacker's own game, so it shows on every screen.");
             ParryAttackerStun = Config.Bind("Parry", "ParryAttackerStun", 1.2f,
                 "Seconds a parried attacker stays down. The game's normal knockdown is 3.");
+            ParrySpeedBoost = Config.Bind("Parry", "ParrySpeedBoost", true,
+                "A parry gives you the same speed boost as knocking someone out (it stacks the same way). Off when the match " +
+                "has the knockout speed boost rule turned off.");
+            FlashDropsBubble = Config.Bind("Shield", "FlashDropsBubble", true,
+                "Being blinded by a flash camera drops your bubble, with the normal cooldown.");
             ParryGlow = Config.Bind("Parry", "ParryGlow", true,
                 "Flash the bubble bright for the whole parry sequence (freeze plus hold).");
             ParryGlowBoost = Config.Bind("Parry", "ParryGlowBoost", 3f,
@@ -803,8 +809,6 @@ namespace SbgShields
             BubbleHudSize = Config.Bind("HUD", "BubbleHudSize", 64f, "Bubble readiness icon size in pixels at HudScale 1.");
             BubbleHudGap = Config.Bind("HUD", "BubbleHudGap", 22f, "Gap between the percent and the icon.");
             BubbleHudOnLeft = Config.Bind("HUD", "BubbleHudOnLeft", true, "Icon left of the percent (away from the item bar). Off = right of it.");
-            CooldownRing = Config.Bind("HUD", "CooldownRing", true,
-                "While the bubble is cooling down, a ring of beads round the icon fills clockwise in your colour until it is ready.");
             ShowPipDots = Config.Bind("HUD", "ShowPipDots", true, "Show pip dots under the icon. Debug aid; the shield itself should carry this in the final build.");
             HudGlow = Config.Bind("HUD", "HudGlow", 1.0f,
                 "Glow behind the bubble icon and the pip circles, in your skin colour: soft when the bubble is ready, breathing while " +
@@ -891,6 +895,7 @@ namespace SbgShields
             ("0.7.24", new[] { "Shield.UseCooldown", "Shield.BreakCooldown" }),
             ("0.7.28", new[] { "Launch.DIWindow" }),
             ("0.7.29", new[] { "Launch.TechWindow" }),
+            ("0.7.40", new[] { "Shield.UseCooldown" }),
         };
 
         private static System.Version ParseVersion(string s) =>
@@ -989,7 +994,7 @@ namespace SbgShields
         private static readonly Action _tickNet = SbgNet.Tick, _tickHandshake = ModHandshake.Tick, _tickState = ShieldState.Tick,
                                         _tickTint = ShieldTint.Tick, _tickLaunchVfx = LaunchVfx.Tick, _tickKillZone = KillZone.Tick,
                                         _tickFlicker = ImmunityFlicker.Tick, _tickLinger = TickLinger,
-                                        _tickHitStop = HitStop.Tick, _tickReflect = ParryReflect.Tick, _tickStocks = Stocks.Tick;
+                                        _tickHitStop = HitStop.Tick, _tickReflect = ParryReflect.Tick, _tickStocks = Stocks.Tick, _tickNetTiming = NetTiming.Tick;
 
         private static void TickLinger()
         {
@@ -1012,6 +1017,7 @@ namespace SbgShields
             Safe("HitStop", _tickHitStop);
             Safe("ParryReflect", _tickReflect);
             Safe("Stocks", _tickStocks);
+            Safe("NetTiming", _tickNetTiming);
             Safe("ShieldState", _tickState);
             Safe("ShieldTint", _tickTint);
             Safe("LaunchVfx", _tickLaunchVfx);

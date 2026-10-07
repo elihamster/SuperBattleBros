@@ -70,6 +70,7 @@ namespace SbgShields
             bool active;
             try { active = p.IsElectromagnetShieldActive; } catch { return; }
             if (!active) return;
+            if (ShieldTint.IsItemShield(p)) { Remove(p); return; }   // the magnet item's shield is the game's, no halo
             var col = p.ElectromagnetShieldCollider;
             if (col == null) return;
 

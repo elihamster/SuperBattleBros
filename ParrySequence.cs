@@ -62,7 +62,7 @@ namespace SbgShields
         private static AccessTools.FieldRef<PlayerAnimatorIo, Animator> _animator;
         private static bool _bound, _bindFailed;
 
-        private static Animator AnimatorOf(PlayerInfo p)
+        internal static Animator AnimatorOf(PlayerInfo p)
         {
             if (!_bound)
             {

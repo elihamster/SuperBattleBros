@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.40 (test build)
+
+- **Club swings can be parried.** Every read of another player's swing said "not swinging": their wind-up is only known on their own machine, and everyone else sees it through the animation. The read now uses the animation. It also stays armed while that player is still winding up (up to 2.5 s after you let go), so a long charged swing can still be parried.
+- **A client's parry sends the ball back.** Before, only the host's could: a client's read reaches the host a ping late, the ball had already hit, and the attacker got stunned instead. Now the client tells the host which ball it parried, and the host fires it back at the attacker. No stun when the ball goes back.
+- **The magnet item's shield keeps the game's own look** on every screen: no skin colour, no halo, no parry flash. Only the Shift bubble wears your colour.
+- **A flash camera that blinds you drops your bubble**, with the normal cooldown. `Shield.FlashDropsBubble`.
+- **A parry gives you the knockout speed boost**, the same one (and the same stacking) as knocking someone out, when the match has that rule on. `Parry.ParrySpeedBoost`.
+- Letting go of a bubble now costs 1.5 s before the next one (was 3).
+- The HUD's cooldown ring is gone; the seconds stay.
+- The log gets one line about the network timing (send rate, ping, interpolation buffer) 20 s into each connection. It changes nothing; it is there to measure before any tuning.
+
 ## 0.7.39 (test build)
 
 Fixes from an independent review of 0.7.35 to 0.7.38.

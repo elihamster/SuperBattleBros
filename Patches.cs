@@ -146,8 +146,9 @@ namespace SbgShields
                 var target = hitter != null ? hitter.NetworkhomingTargetHittable : null;
                 ShieldState.PendingProjectileWasTargeted =
                     target != null && ReferenceEquals(target, __instance.PlayerInfo.AsHittable);
+                ShieldState.PendingProjectileBall = hitter != null ? hitter.netId : 0u;
             }
-            catch { ShieldState.PendingProjectileWasTargeted = false; }
+            catch { ShieldState.PendingProjectileWasTargeted = false; ShieldState.PendingProjectileBall = 0u; }
         }
     }
 
@@ -1000,6 +1001,27 @@ namespace SbgShields
     /// cleanly: drop ours (no parry, no linger), then let the item raise a fresh one with
     /// its own id and its own timer.
     /// </summary>
+    /// <summary>
+    /// A flash camera that blinds you also drops your bubble. The game tells only the
+    /// blinded player, and only blinds within FlashCameraMaxRange; the same check here.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerInfo), "UserCode_RpcInformOfFlashCameraHit__Single")]
+    internal static class FlashDropsBubblePatch
+    {
+        private static void Postfix(PlayerInfo __instance, float distance)
+        {
+            try
+            {
+                if (!Plugin.FlashDropsBubble.Value || !Local.Is(__instance)) return;
+                if (distance > GameManager.ItemSettings.FlashCameraMaxRange) return;
+                if (ParrySequence.LocalFrozen) return;   // nothing lands during the parry freeze
+                if (!(Plugin.WeActivated || Plugin.ShieldLingering)) return;   // only the Shift bubble; the magnet item is the game's
+                Plugin.ForceDrop("flashed by a camera");
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("Flash drop failed: " + e.Message); }
+        }
+    }
+
     [HarmonyPatch(typeof(PlayerInfo), nameof(PlayerInfo.LocalPlayerActivateElectromagnetShield))]
     internal static class ItemShieldTakesOverPatch
     {

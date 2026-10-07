@@ -108,20 +108,47 @@ namespace SbgShields
         internal static bool Enabled => Plugin.TintVanillaShield.Value;
 
         /// <summary>
-        /// Whose bubbles get tinted: everyone's. Every player in a lobby that passed the
-        /// handshake runs this mod, and from another machine a Shift bubble and a magnet
-        /// item's shield are the same SyncVar, so the item is tinted too. Until 0.7.11
-        /// only the local Shift bubble was, which is why a friend's bubble stayed blue.
+        /// Whose bubbles get tinted: every player's Shift bubble, on every machine. A magnet
+        /// item's shield keeps the game's own look so nobody mistakes it for a Shift bubble
+        /// (0.7.40; before that it took the owner's colour too).
         /// </summary>
-        internal static bool IsOurs(PlayerInfo p) => p != null;
+        internal static bool IsOurs(PlayerInfo p) => p != null && !_itemShield.Contains(p);
+
+        /// <summary>Players whose current shield came from the magnet item, decided when it went up.</summary>
+        private static readonly HashSet<PlayerInfo> _itemShield = new HashSet<PlayerInfo>();
+
+        internal static bool IsItemShield(PlayerInfo p) => p != null && _itemShield.Contains(p);
+
+        /// <summary>
+        /// Called as the shield SyncVar changes, before anything is tinted. The shield flag
+        /// itself is the same for both kinds, but the game sets "using an item: magnet"
+        /// before raising the item's shield, and those two SyncVars are declared ahead of
+        /// the shield flag, so they are already current on every machine when its hook
+        /// runs. The Shift bubble never sets them.
+        /// </summary>
+        internal static void NoteShieldKind(PlayerInfo p)
+        {
+            if (p == null) return;
+            try
+            {
+                if (!p.IsElectromagnetShieldActive) { _itemShield.Remove(p); return; }
+                bool item = p.NetworkedEquippedItem == ItemType.Electromagnet && p.NetworkedCurrentItemUse != ItemUseType.None
+                            && !(Local.Is(p) && Plugin.ActivatingOurs);
+                if (item) _itemShield.Add(p); else _itemShield.Remove(p);
+            }
+            catch { _itemShield.Remove(p); }
+        }
 
         internal static void Arm(PlayerInfo p)
         {
-            _armed = null; _armedFor = null; _consumed = false;
-            if (!Enabled || !IsOurs(p)) return;
+            _armed = null; _armedFor = null; _consumed = false; _restoreArmed = false;
+            if (!Enabled || p == null) return;
+            if (!IsOurs(p)) { _restoreArmed = true; return; }   // an item shield: hand any pooled effect back to the game's colours
             _armed = CurrentColour(p);
             _armedFor = p;
         }
+
+        private static bool _restoreArmed;
 
         // ---- Bubble state, visible to everyone ----------------------------------
         // A bubble looks like what it has left: its skin colour at full pips, getting
@@ -191,6 +218,7 @@ namespace SbgShields
             try
             {
                 if (!p.IsElectromagnetShieldActive) { _lastApplied.Remove(p); return; }
+                if (!IsOurs(p)) return;                    // a magnet item's shield keeps the game's look
                 if (IsFlashing(p)) return;                 // the parry flash owns this bubble's colour right now (ours or a remote's)
                 if (Local.Is(p) && _warnActive) return;    // the pip blink owns ours
                 var col = p.ElectromagnetShieldCollider;
@@ -203,7 +231,7 @@ namespace SbgShields
             catch { }
         }
 
-        internal static void Disarm() { _armed = null; _armedFor = null; }
+        internal static void Disarm() { _armed = null; _armedFor = null; _restoreArmed = false; }
 
         // ---- Parry flash -------------------------------------------------------
 
@@ -230,7 +258,7 @@ namespace SbgShields
         /// </summary>
         internal static void ParryFlash(PlayerInfo p)
         {
-            if (!Enabled || !Plugin.ParryGlow.Value || p == null) return;
+            if (!Enabled || !Plugin.ParryGlow.Value || !IsOurs(p)) return;
             var col = p.ElectromagnetShieldCollider;
             if (col == null) return;
 
@@ -320,6 +348,7 @@ namespace SbgShields
         /// </summary>
         internal static void OnSetTeam(TeamColorVfxHandler h)
         {
+            if (_restoreArmed && h != null) { _consumed = true; Restore(h.transform); return; }
             if (!_armed.HasValue || h == null) return;
             _consumed = true;
             Apply(h.transform, _armed.Value, "SetTeam", _armedFor);
@@ -328,6 +357,13 @@ namespace SbgShields
         /// <summary>Called from the shield hook postfix: fallback if no SetTeam consumed the arm.</summary>
         internal static void OnShieldHookDone(PlayerInfo p)
         {
+            if (_restoreArmed)
+            {
+                if (!_consumed && p != null && p.ElectromagnetShieldCollider != null) Restore(p.ElectromagnetShieldCollider.transform);
+                _restoreArmed = false; _consumed = false;
+                if (p != null) _lastApplied.Remove(p);
+                return;
+            }
             if (_armed.HasValue && !_consumed && p.ElectromagnetShieldCollider != null)
                 Apply(p.ElectromagnetShieldCollider.transform, _armed.Value, "hook fallback", p);
             if (_armed.HasValue && p != null && p.IsElectromagnetShieldActive) _lastApplied[p] = _armed.Value;
@@ -377,6 +413,34 @@ namespace SbgShields
             catch (Exception e)
             {
                 if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Shield tint failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Give a pooled effect back to the game's own colours: the item shield borrows the
+        /// same effects a Shift bubble tinted a moment ago.
+        /// </summary>
+        private static void Restore(Transform root)
+        {
+            try
+            {
+                _systems.Clear();
+                root.GetComponentsInChildren(true, _systems);
+                foreach (var ps in _systems) if (_authored.TryGetValue(ps, out var a)) RestoreSystem(ps, a);
+
+                _renderers.Clear();
+                root.GetComponentsInChildren(true, _renderers);
+                foreach (var r in _renderers)
+                    if (_instances.TryGetValue(r, out var inst) && inst.Original != null && ReferenceEquals(r.sharedMaterial, inst.Instance))
+                        r.sharedMaterial = inst.Original;
+
+                _handlers.Clear();
+                root.GetComponentsInChildren(true, _handlers);
+                foreach (var h in _handlers) BubbleMaterialTintPatch.Unregister(h);
+            }
+            catch (Exception e)
+            {
+                if (Plugin.VerboseLogging.Value) Plugin.Log.LogWarning("Shield tint restore failed: " + e.Message);
             }
         }
 
@@ -544,7 +608,8 @@ namespace SbgShields
             _gonePlayers.Clear();
             foreach (var k in _lastFraction.Keys) if (k == null) _gonePlayers.Add(k);
             foreach (var k in _lastApplied.Keys) if (k == null && !_gonePlayers.Contains(k)) _gonePlayers.Add(k);
-            foreach (var k in _gonePlayers) { _lastFraction.Remove(k); _crackUntil.Remove(k); _lastApplied.Remove(k); _flashUntil.Remove(k); }
+            foreach (var k in _itemShield) if (k == null && !_gonePlayers.Contains(k)) _gonePlayers.Add(k);
+            foreach (var k in _gonePlayers) { _lastFraction.Remove(k); _crackUntil.Remove(k); _lastApplied.Remove(k); _flashUntil.Remove(k); _itemShield.Remove(k); }
         }
 
         /// <summary>Full teardown on plugin unload: give everything back and destroy what we made.</summary>
@@ -563,7 +628,8 @@ namespace SbgShields
             _dumped.Clear();
             _restored = true;
             _armed = null; _armedFor = null;
-            _lastFraction.Clear(); _crackUntil.Clear(); _lastApplied.Clear(); _flashUntil.Clear();
+            _lastFraction.Clear(); _crackUntil.Clear(); _lastApplied.Clear(); _flashUntil.Clear(); _itemShield.Clear();
+            _restoreArmed = false;
             BubbleMaterialTintPatch.DestroyAll();
             BubbleHalo.DestroyAll();
         }
@@ -604,6 +670,7 @@ namespace SbgShields
     {
         private static void Prefix(PlayerInfo __instance)
         {
+            ShieldTint.NoteShieldKind(__instance);
             ShieldTint.Arm(__instance);
             if (Plugin.VerboseLogging.Value && Local.Is(__instance) && Plugin.WeActivated)
                 Plugin.Log.LogInfo($"Shield hook fired {(Time.timeAsDouble - Plugin.LastActivationTime) * 1000.0:0} ms after activation (active={__instance.IsElectromagnetShieldActive}).");
@@ -721,6 +788,7 @@ namespace SbgShields
             // the effect; resolve it from where the effect hangs now.
             if (t.Owner == null) t.Owner = ShieldTint.OwnerOf(h.transform);
             if (t.Owner == null) return Time.timeAsDouble - t.LastActive < 0.5;
+            if (ShieldTint.IsItemShield(t.Owner)) return false;   // the owner's shield is now the magnet item's: the game's look
             bool active = false;
             try { active = t.Owner.IsElectromagnetShieldActive; } catch { }
             if (active) t.LastActive = Time.timeAsDouble;
@@ -774,6 +842,12 @@ namespace SbgShields
                 try { _reg.Remove(__instance); } catch { }
                 return true;
             }
+        }
+
+        /// <summary>Hand a handler back to the game now (an item shield took over its effect).</summary>
+        internal static void Unregister(BubbleVfxMaterialHandler h)
+        {
+            if (h != null && _reg.TryGetValue(h, out var t)) Release(h, t);
         }
 
         private static void Release(BubbleVfxMaterialHandler h, Tinted t)

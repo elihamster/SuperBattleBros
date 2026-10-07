@@ -37,8 +37,9 @@ namespace SbgShields
         /// </summary>
         /// Stocks: A = the sender's lives left. StockMode: A = lives per hole (host only; 0 = off).
         /// OutOfStocks: the sender's last life is gone; the host puts them out of the hole.
-        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3, Pips = 4, ParryStun = 5, ParryReflect = 6, Stocks = 7, StockMode = 8, OutOfStocks = 9 }
-        private const byte MaxKind = (byte)Kind.OutOfStocks;
+        /// SendBack: the sender parried ball Item; the host relaunches it at Target (the attacker).
+        internal enum Kind : byte { Percent = 1, StarKo = 2, Parry = 3, Pips = 4, ParryStun = 5, ParryReflect = 6, Stocks = 7, StockMode = 8, OutOfStocks = 9, SendBack = 10 }
+        private const byte MaxKind = (byte)Kind.SendBack;
 
         internal struct Msg : NetworkMessage
         {
@@ -46,6 +47,7 @@ namespace SbgShields
             public uint  NetId;    // who the message is about: always the sender
             public float A;
             public uint  Target;   // the other player involved, or 0
+            public uint  Item;     // an object involved (the parried ball), or 0
         }
 
         private static bool _serverReg, _clientReg, _serializersReg;
@@ -78,8 +80,8 @@ namespace SbgShields
         {
             if (_serializersReg) return;
             _serializersReg = true;
-            Writer<Msg>.write = (w, m) => { w.WriteByte(m.Kind); w.WriteUInt(m.NetId); w.WriteFloat(m.A); w.WriteUInt(m.Target); };
-            Reader<Msg>.read  = r => new Msg { Kind = r.ReadByte(), NetId = r.ReadUInt(), A = r.ReadFloat(), Target = r.ReadUInt() };
+            Writer<Msg>.write = (w, m) => { w.WriteByte(m.Kind); w.WriteUInt(m.NetId); w.WriteFloat(m.A); w.WriteUInt(m.Target); w.WriteUInt(m.Item); };
+            Reader<Msg>.read  = r => new Msg { Kind = r.ReadByte(), NetId = r.ReadUInt(), A = r.ReadFloat(), Target = r.ReadUInt(), Item = r.ReadUInt() };
         }
 
         internal static void Tick()
@@ -142,7 +144,10 @@ namespace SbgShields
         /// <summary>Send a message about the local player that involves another player (the parry stun's target).</summary>
         internal static bool SendTo(Kind kind, PlayerInfo target) => target != null && SendInternal(kind, 0f, target.netId);
 
-        private static bool SendInternal(Kind kind, float a, uint target)
+        /// <summary>We parried this ball: ask the host to send it back at the attacker.</summary>
+        internal static bool SendBall(PlayerInfo attacker, uint ball) => attacker != null && ball != 0u && SendInternal(Kind.SendBack, 0f, attacker.netId, ball);
+
+        private static bool SendInternal(Kind kind, float a, uint target, uint item = 0u)
         {
             if (!ModHandshake.AllPeersConfirmed) return false;   // never into a lobby that might hold a vanilla peer
             try
@@ -150,7 +155,7 @@ namespace SbgShields
                 if (!NetworkClient.isConnected) return false;
                 var local = GameManager.LocalPlayerInfo;
                 if (local == null) return false;
-                NetworkClient.Send(new Msg { Kind = (byte)kind, NetId = local.netId, A = a, Target = target });
+                NetworkClient.Send(new Msg { Kind = (byte)kind, NetId = local.netId, A = a, Target = target, Item = item });
                 return true;
             }
             catch (Exception e) { WarnOnce("send", e); return false; }
@@ -186,6 +191,7 @@ namespace SbgShields
                 if ((Kind)m.Kind == Kind.StarKo) Credits.PostStarKo(p, m.Target != 0u ? FindPlayer(m.Target) : null, (KnockoutType)(int)m.A);
                 if ((Kind)m.Kind == Kind.StockMode && !Local.Is(p)) return;     // only the host says what the mode is
                 if ((Kind)m.Kind == Kind.OutOfStocks) { Stocks.ServerPutOut(p); return; }
+                if ((Kind)m.Kind == Kind.SendBack) { SendBack.ServerRelaunch(p, FindPlayer(m.Target), m.Item); return; }
                 Relay(m);
             }
             catch (Exception e) { WarnOnce("server", e); }
