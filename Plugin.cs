@@ -512,7 +512,7 @@ namespace SbgShields
                 "A parry gives you the same speed boost as knocking someone out (it stacks the same way). Off when the match " +
                 "has the knockout speed boost rule turned off.");
             FlashDropsBubble = Config.Bind("Shield", "FlashDropsBubble", true,
-                "Being blinded by a flash camera drops your bubble, with the normal cooldown.");
+                "Being blinded by a flash camera drops your bubble, and it cannot come back up until the flash wears off.");
             ParryGlow = Config.Bind("Parry", "ParryGlow", true,
                 "Flash the bubble bright for the whole parry sequence (freeze plus hold).");
             ParryGlowBoost = Config.Bind("Parry", "ParryGlowBoost", 3f,
@@ -1170,6 +1170,7 @@ namespace SbgShields
             if (InVictoryDance(player)) { why = "victory dance"; return true; }
             if (IsGiant(player)) { why = "giant form"; return true; }
             if (IsInGolfCart(player)) { why = "in a cart"; return true; }
+            if (FlashDropsBubble.Value && player.IsBlinded) { why = "blinded by a flash"; return true; }
             var movement = player.Movement;
             if (movement != null)
             {

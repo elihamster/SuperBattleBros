@@ -18,7 +18,7 @@ Hold **Left Shift** to raise a bubble. It absorbs hits, costs pips, and breaks i
 
 **Nothing bounces off a held bubble.** Balls, rockets and bombs pass in and cost pips; gun shots land the same way. The bubble is not a body either: a mine, a blast, a laser or a lightning strike measures its distance to you, not to the bubble's edge. Rooted while it's up by default — no moving, jumping, swinging or items.
 
-**Break.** A hit that breaks the bubble is cancelled; you pop straight up, tumble, land, and get up. Everyone nearby hears it, and the bubble is gone for 15 seconds. That cooldown is the real cost. Letting go of a healthy bubble costs 1.5 seconds before the next one, unless you parried. A flash camera that blinds you drops it. The magnet item's shield is the game's own and keeps the game's look, so you can always tell which is which.
+**Break.** A hit that breaks the bubble is cancelled; you pop straight up, tumble, land, and get up. Everyone nearby hears it, and the bubble is gone for 15 seconds. That cooldown is the real cost. Letting go of a healthy bubble costs 1.5 seconds before the next one, unless you parried. A flash camera that blinds you drops it, and it stays down until the flash wears off. The magnet item's shield is the game's own and keeps the game's look, so you can always tell which is which.
 
 **Parry.** Let go of the bubble with a threat coming — anything that would reach you within about a third of a second, or a golfer winding up next to you — and the next hit from it is parried: no pips, no percent, no knockback, and it stops a swing that would normally break the bubble. Letting go with nothing coming arms nothing, so it cannot be fished for. Someone aiming a gun along a line through your bubble counts too (experimental).
 
